@@ -39,6 +39,7 @@ type Pane struct {
 	cols    int
 	rows    int
 	started bool
+	exited  bool
 	done    chan struct{}
 	exitErr error
 }
@@ -112,6 +113,7 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 		exitErr := cmd.Cmd.Wait()
 		p.mu.Lock()
 		p.exitErr = exitErr
+		p.exited = true
 		p.mu.Unlock()
 		close(p.done)
 		send(PaneExitMsg{Key: p.key, Err: exitErr})
@@ -173,4 +175,17 @@ func (p *Pane) Started() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.started
+}
+
+// Exited reports whether the child process has terminated.
+func (p *Pane) Exited() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exited
+}
+
+// IsInteractive reports whether this pane runs an interactive shell
+// (i.e. no fixed command — a Console tab).
+func (p *Pane) IsInteractive() bool {
+	return p.cfg.IsInteractive()
 }

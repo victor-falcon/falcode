@@ -133,6 +133,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case PaneExitMsg:
+		// Non-interactive (command) panes show an in-pane restart banner, so we
+		// only surface a status message when there is an actual error.
 		if msg.Err != nil {
 			m.setStatus(fmt.Sprintf("process exited: %v", msg.Err))
 		}
@@ -186,6 +188,14 @@ func (m *Model) View() string {
 	}
 	paneContent = strings.Join(paneLines, "\n")
 
+	// Overlay a restart banner centered over the pane area when a
+	// non-interactive (command) pane has stopped. This is done before joining
+	// with the tab bar so the tab bar is never affected.
+	if pane := m.activePane(); pane != nil && pane.Exited() && !pane.IsInteractive() {
+		banner := m.styles.ExitBanner.Render("process stopped  ·  press Enter to restart")
+		paneContent = overlayCentered(paneContent, banner, m.width, m.paneHeight())
+	}
+
 	view := tabBar + "\n" + paneContent
 
 	// Overlay the which-key sheet if visible.
@@ -216,6 +226,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Forward to active PTY.
 	if pane := m.activePane(); pane != nil {
+		// If a non-interactive command pane has stopped, Enter restarts it;
+		// all other keys are swallowed until the process is running again.
+		if pane.Exited() && !pane.IsInteractive() {
+			if msg.Type == tea.KeyEnter {
+				return m.restartPane(PaneKey{Workspace: m.activeWS, Tab: m.activeInner})
+			}
+			return m, nil
+		}
 		if b := keyToBytes(msg); b != nil {
 			pane.Write(b)
 		}
@@ -394,6 +412,16 @@ func (m *Model) deleteWorkspaceCmd() tea.Cmd {
 		}
 		return nil
 	}
+}
+
+// restartPane stops the exited pane, removes it from the registry, and
+// launches a fresh instance of the same command.
+func (m *Model) restartPane(key PaneKey) (tea.Model, tea.Cmd) {
+	if p, ok := m.panes[key]; ok {
+		p.Stop()
+		delete(m.panes, key)
+	}
+	return m, m.ensurePaneCmd(key)
 }
 
 func (m *Model) passthroughPrefix() {

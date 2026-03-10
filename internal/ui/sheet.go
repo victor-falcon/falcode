@@ -113,6 +113,61 @@ func RenderSheet(bindings []*config.Keybind, title string, st uiStyles) string {
 	return st.SheetBox.Render(content)
 }
 
+// overlayCentered composites overlayStr horizontally and vertically centered
+// over baseStr. baseStr is the pane content exactly totalWidth×totalHeight
+// characters. Each line in vt10x output ends with \x1b[0m so ANSI state does
+// not bleed across lines, making per-line truncation safe.
+func overlayCentered(baseStr, overlayStr string, totalWidth, totalHeight int) string {
+	if overlayStr == "" {
+		return baseStr
+	}
+
+	baseLines := strings.Split(baseStr, "\n")
+	overlayLines := strings.Split(overlayStr, "\n")
+	overlayH := len(overlayLines)
+
+	// Find the widest overlay line.
+	overlayW := 0
+	for _, l := range overlayLines {
+		if w := lipgloss.Width(l); w > overlayW {
+			overlayW = w
+		}
+	}
+
+	// Center position within the pane area.
+	startRow := (totalHeight - overlayH) / 2
+	startCol := (totalWidth - overlayW) / 2
+	if startCol < 0 {
+		startCol = 0
+	}
+
+	for i, overlayLine := range overlayLines {
+		row := startRow + i
+		if row < 0 || row >= len(baseLines) {
+			continue
+		}
+
+		base := baseLines[row]
+
+		// Left: keep base content up to startCol (safe with ANSI codes).
+		left := xansi.Truncate(base, startCol, "")
+		if leftW := lipgloss.Width(left); leftW < startCol {
+			left += strings.Repeat(" ", startCol-leftW)
+		}
+
+		// Right: fill remaining width after the overlay with spaces.
+		rightW := totalWidth - startCol - lipgloss.Width(overlayLine)
+		right := ""
+		if rightW > 0 {
+			right = strings.Repeat(" ", rightW)
+		}
+
+		baseLines[row] = left + overlayLine + right
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
 // overlayBottomRight composites sheetStr over baseStr at the bottom-right corner.
 // totalWidth is the full terminal width.
 func overlayBottomRight(baseStr, sheetStr string, totalWidth, sheetRowOffset int) string {

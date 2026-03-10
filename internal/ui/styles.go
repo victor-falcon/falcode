@@ -28,6 +28,9 @@ type uiStyles struct {
 	SheetGroup lipgloss.Style
 	SheetSep   lipgloss.Style
 
+	// Exit / restart banner
+	ExitBanner lipgloss.Style
+
 	// Raw colours for compositing
 	SheetBgColor lipgloss.Color
 }
@@ -105,6 +108,14 @@ func newStyles(t *config.ThemeColors) uiStyles {
 		SheetSep: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(t.SheetSeparator)).
 			Background(sheetBg),
+
+		ExitBanner: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.SheetDescription)).
+			Background(sheetBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(t.SheetBorder)).
+			BorderBackground(sheetBg).
+			Padding(0, 1),
 
 		SheetBgColor: sheetBg,
 	}
