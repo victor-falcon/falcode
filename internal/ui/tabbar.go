@@ -13,6 +13,8 @@ import (
 const (
 	zoneWorkspacePrefix = "ws-"
 	zoneInnerPrefix     = "it-"
+	zoneInnerClose      = "it-close-"
+	zoneNewTabBtn       = "new-tab-btn"
 )
 
 // WorkspaceTabZoneID returns the bubblezone ID for a workspace tab.
@@ -20,6 +22,12 @@ func WorkspaceTabZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneWorkspa
 
 // InnerTabZoneID returns the bubblezone ID for an inner tab.
 func InnerTabZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneInnerPrefix, idx) }
+
+// InnerTabCloseZoneID returns the bubblezone ID for an inner tab's × button.
+func InnerTabCloseZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneInnerClose, idx) }
+
+// NewTabBtnZoneID returns the bubblezone ID for the + new-tab button.
+func NewTabBtnZoneID() string { return zoneNewTabBtn }
 
 // TabBarHeight returns the number of rows the tab bar occupies (2: workspace + inner).
 func TabBarHeight() int { return 2 }
@@ -34,10 +42,11 @@ func RenderTabBar(
 	totalWidth int,
 	prefixMode bool,
 	statusMsg string,
+	ui *config.UIConfig,
 	st uiStyles,
 ) string {
 	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, st)
-	innerRow := renderInnerRow(zm, innerTabs, extraTabs, activeInner, totalWidth, st)
+	innerRow := renderInnerRow(zm, innerTabs, extraTabs, activeInner, totalWidth, ui, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
 
@@ -82,14 +91,19 @@ func renderWorkspaceRow(
 	return tabsStr + gap + indicator
 }
 
-// renderInnerRow renders the second row of inner (per-workspace) tabs.
+// renderInnerRow renders the second row of inner (per-workspace) tabs,
+// including optional × close buttons and + new-tab button.
 func renderInnerRow(
 	zm *zone.Manager,
 	cfgTabs []*config.Tab,
 	extraTabs []string,
 	activeInner, totalWidth int,
+	ui *config.UIConfig,
 	st uiStyles,
 ) string {
+	closeMode := ui.GetCloseTabButton()
+	showNewTab := ui.GetNewTabButton()
+
 	// Combine configured tabs and dynamically-added ones.
 	allLabels := make([]string, 0, len(cfgTabs)+len(extraTabs))
 	for _, t := range cfgTabs {
@@ -97,20 +111,52 @@ func renderInnerRow(
 	}
 	allLabels = append(allLabels, extraTabs...)
 
+	cfgCount := len(cfgTabs) // built-in tabs cannot be closed
 	sep := st.InnerSeparator.Render("│")
 
 	var parts []string
 	for i, label := range allLabels {
-		var styled string
-		if i == activeInner {
-			styled = st.InnerActive.Render(label)
+		isActive := i == activeInner
+		isExtra := i >= cfgCount
+		showClose := isExtra && (closeMode == config.CloseTabButtonAll ||
+			(closeMode == config.CloseTabButtonFocus && isActive))
+
+		var tabPart string
+		if showClose {
+			// Split the tab into two zones: label (switches tab) and × (closes tab).
+			// The label loses its right padding; the × carries left spacing + right padding.
+			if isActive {
+				namePart := zm.Mark(InnerTabZoneID(i), st.InnerActive.PaddingRight(0).Render(label))
+				closePart := zm.Mark(InnerTabCloseZoneID(i), st.InnerActive.Bold(false).PaddingLeft(0).Render(" ×"))
+				tabPart = namePart + closePart
+			} else {
+				namePart := zm.Mark(InnerTabZoneID(i), st.InnerInactive.PaddingRight(0).Render(label))
+				closePart := zm.Mark(InnerTabCloseZoneID(i), st.InnerInactive.PaddingLeft(0).Render(" ×"))
+				tabPart = namePart + closePart
+			}
 		} else {
-			styled = st.InnerInactive.Render(label)
+			var styled string
+			if isActive {
+				styled = st.InnerActive.Render(label)
+			} else {
+				styled = st.InnerInactive.Render(label)
+			}
+			tabPart = zm.Mark(InnerTabZoneID(i), styled)
 		}
+
 		if i > 0 {
 			parts = append(parts, sep)
 		}
-		parts = append(parts, zm.Mark(InnerTabZoneID(i), styled))
+		parts = append(parts, tabPart)
+	}
+
+	// + new-tab button at the end.
+	if showNewTab {
+		newTabPart := zm.Mark(NewTabBtnZoneID(), st.InnerInactive.Render("+"))
+		if len(parts) > 0 {
+			parts = append(parts, sep)
+		}
+		parts = append(parts, newTabPart)
 	}
 
 	row := strings.Join(parts, "")

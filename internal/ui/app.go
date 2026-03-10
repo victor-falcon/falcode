@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
 	"github.com/victor-falcon/falcode/internal/config"
@@ -37,8 +38,11 @@ type Model struct {
 
 	// cfgTabs are the fixed tabs from config (shared across workspaces).
 	// extraTabs[ws] lists dynamically-added console tab labels per workspace.
-	cfgTabs   []*config.Tab
-	extraTabs [][]string
+	// closedCfgTabs[ws] records which cfgTab indices have been hidden per-workspace;
+	// cfgTabs itself is never mutated so extra-tab pane keys remain stable.
+	cfgTabs       []*config.Tab
+	extraTabs     [][]string
+	closedCfgTabs []map[int]bool
 
 	// panes is the PTY pane registry; lazily populated on first tab visit.
 	panes map[PaneKey]*Pane
@@ -58,6 +62,10 @@ type Model struct {
 
 	// Which-key sheet with spring animation.
 	sheet *Sheet
+
+	// Tab name prompt state.
+	namingTab    bool
+	tabNameInput textinput.Model
 
 	// Status message displayed in the tab bar gap.
 	statusMsg     string
@@ -81,6 +89,10 @@ func New(
 		extraTabs[i] = []string{}
 	}
 
+	ti := textinput.New()
+	ti.Placeholder = "tab name"
+	ti.CharLimit = 32
+
 	return &Model{
 		cfg:          cfg,
 		keybinds:     keybinds,
@@ -94,6 +106,7 @@ func New(
 		width:        cols,
 		height:       rows,
 		sheet:        NewSheet(),
+		tabNameInput: ti,
 		currentLayer: keybinds.Bindings,
 		layerTitle:   "falcode",
 		version:      version,
@@ -178,6 +191,7 @@ func (m *Model) View() string {
 		m.width,
 		m.prefixMode,
 		m.currentStatus(),
+		m.cfg.UI,
 		m.styles,
 	)
 
@@ -201,10 +215,16 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, banner, m.width, m.paneHeight())
 	}
 
+	// Overlay the tab name prompt when the user is creating a new tab.
+	if m.namingTab {
+		prompt := m.renderTabNamePrompt()
+		paneContent = overlayCentered(paneContent, prompt, m.width, m.paneHeight())
+	}
+
 	view := tabBar + "\n" + paneContent
 
 	// Footer: context hint (left) and build version (right).
-	if !m.cfg.HideFooter {
+	if !m.cfg.UI.GetHideFooter() {
 		footer := RenderFooter(m.keybinds.Prefix, m.version, m.prefixMode, m.width, m.styles)
 		view = view + "\n" + footer
 	}
@@ -226,6 +246,28 @@ func (m *Model) View() string {
 // ============================================================
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Tab naming prompt intercepts all keys.
+	if m.namingTab {
+		switch msg.Type {
+		case tea.KeyEnter:
+			name := strings.TrimSpace(m.tabNameInput.Value())
+			if name == "" {
+				name = fmt.Sprintf("console-%d", len(m.extraTabs[m.activeWS])+1)
+			}
+			m.namingTab = false
+			m.tabNameInput.Blur()
+			m.addExtraTab(name)
+			return m, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner})
+		case tea.KeyEsc:
+			m.namingTab = false
+			m.tabNameInput.Blur()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.tabNameInput, cmd = m.tabNameInput.Update(msg)
+		return m, cmd
+	}
+
 	if m.prefixMode {
 		return m.handleLayerKey(msg)
 	}
@@ -304,10 +346,22 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Inner tabs.
 	totalInner := len(m.cfgTabs) + len(m.extraTabs[m.activeWS])
 	for i := 0; i < totalInner; i++ {
+		if zi := m.zm.Get(InnerTabCloseZoneID(i)); zi != nil && zi.InBounds(msg) {
+			m.closeTab(i)
+			return m, nil
+		}
 		if zi := m.zm.Get(InnerTabZoneID(i)); zi != nil && zi.InBounds(msg) {
 			m.switchInnerTab(i)
 			return m, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: i})
 		}
+	}
+
+	// + new-tab button.
+	if zi := m.zm.Get(NewTabBtnZoneID()); zi != nil && zi.InBounds(msg) {
+		m.tabNameInput.SetValue("")
+		m.tabNameInput.Focus()
+		m.namingTab = true
+		return m, nil
 	}
 
 	return m, nil
@@ -334,8 +388,10 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 			m.switchInnerTab(m.wrapInner(m.activeInner - 1))
 			cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
 		case config.ActionNewTab:
-			m.addExtraTab()
-			cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
+			m.tabNameInput.SetValue("")
+			m.tabNameInput.Focus()
+			m.namingTab = true
+			m.exitPrefixMode()
 		case config.ActionCloseTab:
 			m.closeCurrentTab()
 		case config.ActionNextWorkspace:
@@ -365,27 +421,40 @@ func (m *Model) switchInnerTab(idx int) {
 	m.activeInner = idx
 }
 
-func (m *Model) addExtraTab() {
-	n := len(m.extraTabs[m.activeWS]) + 1
-	label := fmt.Sprintf("console-%d", n)
-	m.extraTabs[m.activeWS] = append(m.extraTabs[m.activeWS], label)
+func (m *Model) addExtraTab(name string) {
+	m.extraTabs[m.activeWS] = append(m.extraTabs[m.activeWS], name)
 	m.activeInner = len(m.cfgTabs) + len(m.extraTabs[m.activeWS]) - 1
 }
 
 func (m *Model) closeCurrentTab() {
-	if m.activeInner < len(m.cfgTabs) {
+	m.closeTab(m.activeInner)
+}
+
+func (m *Model) closeTab(idx int) {
+	if idx < len(m.cfgTabs) {
 		m.setStatus("cannot close a built-in tab")
 		return
 	}
-	extraIdx := m.activeInner - len(m.cfgTabs)
-	key := PaneKey{Workspace: m.activeWS, Tab: m.activeInner}
+	extraIdx := idx - len(m.cfgTabs)
+	key := PaneKey{Workspace: m.activeWS, Tab: idx}
 	if p, ok := m.panes[key]; ok {
 		p.Stop()
 		delete(m.panes, key)
 	}
 	extra := m.extraTabs[m.activeWS]
 	m.extraTabs[m.activeWS] = append(extra[:extraIdx], extra[extraIdx+1:]...)
-	if m.activeInner > 0 {
+
+	// Re-index pane keys for tabs that shifted down in this workspace.
+	newPanes := make(map[PaneKey]*Pane, len(m.panes))
+	for k, p := range m.panes {
+		if k.Workspace == m.activeWS && k.Tab > idx {
+			k.Tab--
+		}
+		newPanes[k] = p
+	}
+	m.panes = newPanes
+
+	if m.activeInner >= idx && m.activeInner > 0 {
 		m.activeInner--
 	}
 }
@@ -557,7 +626,7 @@ func (m *Model) tabForKey(key PaneKey) *config.Tab {
 
 func (m *Model) paneHeight() int {
 	h := m.height - TabBarHeight()
-	if !m.cfg.HideFooter {
+	if !m.cfg.UI.GetHideFooter() {
 		h -= FooterHeight()
 	}
 	if h < 1 {
@@ -569,6 +638,15 @@ func (m *Model) paneHeight() int {
 // ============================================================
 // Status helpers
 // ============================================================
+
+func (m *Model) renderTabNamePrompt() string {
+	st := m.styles
+	title := st.SheetTitle.Render("New Tab Name")
+	sep := st.SheetSep.Render(strings.Repeat("─", 24))
+	input := m.tabNameInput.View()
+	content := strings.Join([]string{title, sep, input}, "\n")
+	return st.SheetBox.Render(content)
+}
 
 func (m *Model) setStatus(msg string) {
 	m.statusMsg = msg

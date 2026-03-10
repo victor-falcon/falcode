@@ -17,21 +17,9 @@
       },
       "minItems": 1
     },
-    "theme": {
-      "type": "string",
-      "description": "Name of the color theme to load from ~/.config/falcode/themes/{name}.json. Defaults to \"default\".",
-      "default": "default"
-    },
-    "theme_scheme": {
-      "type": "string",
-      "description": "Color scheme variant to use: \"system\" auto-detects the OS dark/light mode, \"dark\" and \"light\" force a specific scheme.",
-      "enum": ["system", "dark", "light"],
-      "default": "system"
-    },
-    "hide_footer": {
-      "type": "boolean",
-      "description": "When true, the footer bar (prefix hint and version) is hidden.",
-      "default": false
+    "ui": {
+      "$ref": "#/$defs/uiConfig",
+      "description": "UI display options."
     },
     "keybinds": {
       "$ref": "#/$defs/keybindsConfig",
@@ -40,6 +28,40 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "uiConfig": {
+      "type": "object",
+      "description": "UI display options.",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "description": "Name of the color theme to load from ~/.config/falcode/themes/{name}.json. Defaults to \"default\".",
+          "default": "default"
+        },
+        "theme_scheme": {
+          "type": "string",
+          "description": "Color scheme variant to use: \"system\" auto-detects the OS dark/light mode, \"dark\" and \"light\" force a specific scheme.",
+          "enum": ["system", "dark", "light"],
+          "default": "system"
+        },
+        "hide_footer": {
+          "type": "boolean",
+          "description": "When true, the footer bar (prefix hint and version) is hidden.",
+          "default": false
+        },
+        "new_tab_button": {
+          "type": "boolean",
+          "description": "When true (default), a clickable + button is shown at the end of the inner tab bar.",
+          "default": true
+        },
+        "close_tab_button": {
+          "type": "string",
+          "description": "Controls when the × close button is shown on inner tabs: \"all\" always, \"focus\" only on the active tab, \"none\" never.",
+          "enum": ["all", "focus", "none"],
+          "default": "focus"
+        }
+      },
+      "additionalProperties": false
+    },
     "tab": {
       "type": "object",
       "description": "A single inner tab.",

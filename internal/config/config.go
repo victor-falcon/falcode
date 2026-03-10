@@ -31,13 +31,79 @@ func (t *Tab) IsInteractive() bool {
 	return t.Command == ""
 }
 
+// CloseTabButton controls when the × close button is shown on inner tabs.
+type CloseTabButton string
+
+const (
+	CloseTabButtonAll   CloseTabButton = "all"
+	CloseTabButtonFocus CloseTabButton = "focus"
+	CloseTabButtonNone  CloseTabButton = "none"
+)
+
+// UIConfig holds all UI display options.
+type UIConfig struct {
+	// Theme is the name of the color theme to use. Defaults to "default".
+	Theme string `json:"theme,omitempty"`
+	// ThemeScheme selects the light/dark variant: "system", "dark", or "light".
+	ThemeScheme string `json:"theme_scheme,omitempty"`
+	// HideFooter removes the hint footer row when true.
+	HideFooter bool `json:"hide_footer,omitempty"`
+	// NewTabButton shows a clickable + at the end of the inner tab bar.
+	// Defaults to true when omitted.
+	NewTabButton *bool `json:"new_tab_button,omitempty"`
+	// CloseTabButton controls which extra tabs show a clickable × button.
+	// Valid values: "all", "focus", "none". Defaults to "focus".
+	CloseTabButton CloseTabButton `json:"close_tab_button,omitempty"`
+}
+
+// GetTheme returns the configured theme name, falling back to "default".
+func (u *UIConfig) GetTheme() string {
+	if u == nil || u.Theme == "" {
+		return "default"
+	}
+	return u.Theme
+}
+
+// GetThemeScheme returns the configured scheme string (may be empty or "system",
+// both of which are treated identically by the caller).
+func (u *UIConfig) GetThemeScheme() string {
+	if u == nil {
+		return "system"
+	}
+	return u.ThemeScheme
+}
+
+// GetHideFooter returns whether the footer should be hidden.
+func (u *UIConfig) GetHideFooter() bool {
+	if u == nil {
+		return false
+	}
+	return u.HideFooter
+}
+
+// GetNewTabButton returns whether the + new-tab button should be rendered.
+// Defaults to true when the field is absent.
+func (u *UIConfig) GetNewTabButton() bool {
+	if u == nil || u.NewTabButton == nil {
+		return true
+	}
+	return *u.NewTabButton
+}
+
+// GetCloseTabButton returns the resolved CloseTabButton value.
+// Defaults to CloseTabButtonFocus when absent.
+func (u *UIConfig) GetCloseTabButton() CloseTabButton {
+	if u == nil || u.CloseTabButton == "" {
+		return CloseTabButtonFocus
+	}
+	return u.CloseTabButton
+}
+
 // Config is the top-level application configuration.
 type Config struct {
-	Tabs        []*Tab          `json:"tabs"`
-	Theme       string          `json:"theme,omitempty"`
-	ThemeScheme string          `json:"theme_scheme,omitempty"` // "system" | "dark" | "light"
-	HideFooter  bool            `json:"hide_footer"`
-	Keybinds    *KeybindsConfig `json:"keybinds,omitempty"`
+	Tabs     []*Tab          `json:"tabs"`
+	UI       *UIConfig       `json:"ui,omitempty"`
+	Keybinds *KeybindsConfig `json:"keybinds,omitempty"`
 }
 
 // Load returns the Config using a 3-priority search:

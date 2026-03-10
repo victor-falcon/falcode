@@ -49,12 +49,12 @@ func run(_ *cobra.Command, _ []string) error {
 
 	// Resolve the color scheme before loading the theme.
 	// "system" (and empty) means detect the OS appearance at boot time.
-	scheme := cfg.ThemeScheme
+	scheme := cfg.UI.GetThemeScheme()
 	if scheme == "" || scheme == "system" {
 		scheme = config.DetectSystemScheme()
 	}
 
-	theme, err := config.LoadTheme(cfg.Theme, scheme)
+	theme, err := config.LoadTheme(cfg.UI.GetTheme(), scheme)
 	if err != nil {
 		return fmt.Errorf("loading theme: %w", err)
 	}
