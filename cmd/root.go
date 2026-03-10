@@ -12,6 +12,11 @@ import (
 	"github.com/victor-falcon/falcode/internal/ui"
 )
 
+// Version is the current build version. It is overridden at build time with:
+//
+//	go build -ldflags "-X 'github.com/victor-falcon/falcode/cmd.Version=1.2.3'"
+var Version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "falcode",
 	Short: "Terminal multiplexer for multi-agent git worktree workflows",
@@ -65,7 +70,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	// --- Build model and program ---
-	model := ui.New(cfg, keybinds, theme, worktrees, cols, rows)
+	model := ui.New(cfg, keybinds, theme, worktrees, cols, rows, Version)
 
 	prog := tea.NewProgram(
 		model,

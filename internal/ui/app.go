@@ -47,6 +47,9 @@ type Model struct {
 	height int
 	ready  bool
 
+	// Build version shown in the footer.
+	version string
+
 	// Keybind / prefix mode state.
 	prefixMode   bool
 	layerStack   []layerState
@@ -68,6 +71,7 @@ func New(
 	theme *config.ThemeColors,
 	worktrees []*git.Worktree,
 	cols, rows int,
+	version string,
 ) *Model {
 	zm := zone.New()
 	zm.SetEnabled(true)
@@ -92,6 +96,7 @@ func New(
 		sheet:        NewSheet(),
 		currentLayer: keybinds.Bindings,
 		layerTitle:   "falcode",
+		version:      version,
 	}
 }
 
@@ -197,6 +202,10 @@ func (m *Model) View() string {
 	}
 
 	view := tabBar + "\n" + paneContent
+
+	// Footer: context hint (left) and build version (right).
+	footer := RenderFooter(m.keybinds.Prefix, m.version, m.prefixMode, m.width, m.styles)
+	view = view + "\n" + footer
 
 	// Overlay the which-key sheet if visible.
 	if m.sheet.Visible() {
@@ -531,7 +540,7 @@ func (m *Model) tabForKey(key PaneKey) *config.Tab {
 }
 
 func (m *Model) paneHeight() int {
-	h := m.height - TabBarHeight()
+	h := m.height - TabBarHeight() - FooterHeight()
 	if h < 1 {
 		h = 1
 	}

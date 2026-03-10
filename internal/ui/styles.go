@@ -31,6 +31,11 @@ type uiStyles struct {
 	// Exit / restart banner
 	ExitBanner lipgloss.Style
 
+	// Footer bar
+	FooterBg   lipgloss.Style
+	FooterText lipgloss.Style
+	FooterKey  lipgloss.Style
+
 	// Raw colours for compositing
 	SheetBgColor lipgloss.Color
 }
@@ -116,6 +121,18 @@ func newStyles(t *config.ThemeColors) uiStyles {
 			BorderForeground(lipgloss.Color(t.SheetBorder)).
 			BorderBackground(sheetBg).
 			Padding(0, 1),
+
+		FooterBg: lipgloss.NewStyle().
+			Background(lipgloss.Color(t.InnerBarBg)),
+
+		FooterText: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.InnerInactiveFg)).
+			Background(lipgloss.Color(t.InnerBarBg)),
+
+		FooterKey: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(t.SheetKey)).
+			Background(lipgloss.Color(t.InnerBarBg)),
 
 		SheetBgColor: sheetBg,
 	}
