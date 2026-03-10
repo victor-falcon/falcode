@@ -446,6 +446,17 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		return m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
 
 	default:
+		// Check if this Kitty-encoded key matches the configured prefix key.
+		// When Kitty protocol is active, ctrl+b arrives as ESC[98;5u instead of
+		// a tea.KeyMsg, so matchesPrefixKey() never sees it. We decode it here.
+		if m.kittyKeycodeMatchesPrefix(keycode, modifier) {
+			if !m.prefixMode {
+				m.enterPrefixMode()
+				return m, animTick()
+			}
+			return m, nil
+		}
+
 		// Unknown key — forward raw to PTY when not in a modal.
 		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
 			return m, nil
@@ -1208,6 +1219,34 @@ func (m *Model) wrapWS(idx int) int {
 
 func (m *Model) matchesPrefixKey(msg tea.KeyMsg) bool {
 	return keyMsgString(msg) == m.keybinds.Prefix
+}
+
+// kittyKeycodeMatchesPrefix reports whether the Kitty-decoded keycode and
+// modifier represent the same key as the configured prefix string.
+//
+// When the Kitty keyboard protocol is active, Ctrl+letter keys arrive as
+// ESC[<codepoint>;<modifier>u instead of being routed through tea.KeyMsg, so
+// matchesPrefixKey never sees them. This function bridges that gap by
+// decoding the Kitty modifier bitmask and comparing against the prefix.
+//
+// Currently supports "ctrl+<letter>" prefixes (the only default and most
+// common user choice). The Kitty modifier encoding: modifier = 1 + bitmask
+// where bit2 = ctrl, bit1 = alt, bit0 = shift.
+func (m *Model) kittyKeycodeMatchesPrefix(keycode, modifier int) bool {
+	prefix := strings.ToLower(m.keybinds.Prefix)
+	if !strings.HasPrefix(prefix, "ctrl+") {
+		return false
+	}
+	letter := strings.TrimPrefix(prefix, "ctrl+")
+	if len(letter) != 1 {
+		return false
+	}
+	// Kitty modifier: bit2 (value 4) = ctrl; no other modifier bits set.
+	modBits := modifier - 1
+	ctrlOnly := modBits == 4
+	// keycode must match the letter's codepoint (case-insensitive).
+	expectedCode := int(letter[0])
+	return ctrlOnly && (keycode == expectedCode || keycode == expectedCode-32)
 }
 
 // keyMsgString returns a normalised string representation of a key.
