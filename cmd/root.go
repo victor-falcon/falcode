@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
@@ -39,6 +40,12 @@ func run(_ *cobra.Command, _ []string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	// --- Rename zellij pane if running inside a zellij session ---
+	if _, inZellij := os.LookupEnv("ZELLIJ"); inZellij {
+		//nolint:errcheck
+		exec.Command("zellij", "action", "rename-pane", "Falcode").Run()
 	}
 
 	// --- Load configuration ---
