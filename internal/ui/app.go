@@ -892,7 +892,7 @@ func (m *Model) tabForKey(key PaneKey) *config.Tab {
 }
 
 func (m *Model) paneHeight() int {
-	h := m.height - TabBarHeight()
+	h := m.height - TabBarHeight(m.cfg.UI)
 	if !m.cfg.UI.GetHideFooter() {
 		h -= FooterHeight()
 	}

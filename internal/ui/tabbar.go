@@ -37,10 +37,17 @@ func NewTabBtnZoneID() string { return zoneNewTabBtn }
 // NewWorkspaceBtnZoneID returns the bubblezone ID for the + new-workspace button.
 func NewWorkspaceBtnZoneID() string { return zoneNewWorkspaceBtn }
 
-// TabBarHeight returns the number of rows the tab bar occupies (2: workspace + inner).
-func TabBarHeight() int { return 2 }
+// TabBarHeight returns the number of rows the tab bar occupies.
+// In compact mode it is 1 (unified row); otherwise it is 2 (workspace + inner).
+func TabBarHeight(ui *config.UIConfig) int {
+	if ui.GetCompactTabs() {
+		return 1
+	}
+	return 2
+}
 
-// RenderTabBar renders the full two-row tab bar.
+// RenderTabBar renders the tab bar. In compact mode a single unified row is
+// produced; otherwise the classic two-row layout (workspace + inner) is used.
 func RenderTabBar(
 	zm *zone.Manager,
 	worktrees []*git.Worktree,
@@ -54,6 +61,10 @@ func RenderTabBar(
 	ui *config.UIConfig,
 	st uiStyles,
 ) string {
+	if ui.GetCompactTabs() {
+		return renderCompactRow(zm, worktrees, innerTabs, extraTabs, closedCfgTabs,
+			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, st)
+	}
 	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, st)
 	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, activeInner, totalWidth, ui, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
@@ -219,4 +230,161 @@ func renderInnerRow(
 		row += st.InnerBarBg.Render(strings.Repeat(" ", totalWidth-rowWidth))
 	}
 	return row
+}
+
+// renderCompactRow renders a single unified tab row combining workspace tabs
+// and inner tabs. The layout is:
+//
+//	[ws-before...] [active-ws] inner-tab │ inner-tab │ + [ws-after...]  gap  +
+//
+// Inactive workspace tabs that precede the active workspace are shown on the
+// left; those that follow are shown on the right, before the trailing gap.
+// The new-workspace + button is anchored to the far right.
+func renderCompactRow(
+	zm *zone.Manager,
+	worktrees []*git.Worktree,
+	cfgTabs []*config.Tab,
+	extraTabs []string,
+	closedCfgTabs map[int]bool,
+	activeWS, activeInner, totalWidth int,
+	prefixMode bool,
+	statusMsg string,
+	ui *config.UIConfig,
+	st uiStyles,
+) string {
+	closeWSMode := ui.GetCloseWorkspaceButton()
+	closeTabMode := ui.GetCloseTabButton()
+	showNewTab := ui.GetNewTabButton()
+	showNewWS := ui.GetNewWorkspaceButton()
+
+	// renderWSTab builds a single workspace tab string (active or inactive).
+	renderWSTab := func(i int, wt *git.Worktree, isActive bool) string {
+		label := wt.Name()
+		canClose := !wt.IsMain && len(worktrees) > 1 &&
+			(closeWSMode == config.CloseWorkspaceButtonAll ||
+				(closeWSMode == config.CloseWorkspaceButtonFocus && isActive))
+		if canClose {
+			if isActive {
+				name := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.PaddingRight(0).Render(label))
+				close := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
+				return name + close
+			}
+			name := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.PaddingRight(0).Render(label))
+			close := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceInactive.PaddingLeft(0).Render(" ×"))
+			return name + close
+		}
+		if isActive {
+			return zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.Render(label))
+		}
+		return zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.Render(label))
+	}
+
+	var parts []string
+
+	// 1. Workspace tabs that precede the active workspace.
+	for i, wt := range worktrees {
+		if i < activeWS {
+			parts = append(parts, renderWSTab(i, wt, false))
+		}
+	}
+
+	// 2. Active workspace tab.
+	if activeWS < len(worktrees) {
+		parts = append(parts, renderWSTab(activeWS, worktrees[activeWS], true))
+	}
+
+	// 3. Inner (per-workspace) tabs with │ separators between them.
+	sep := st.InnerSeparator.Render("│")
+	innerFirst := true
+	logicalIdx := 0
+
+	appendInnerTab := func(label string, showClose bool) {
+		isActive := logicalIdx == activeInner
+		i := logicalIdx
+
+		var tabPart string
+		if showClose {
+			if isActive {
+				name := zm.Mark(InnerTabZoneID(i), st.InnerActive.PaddingRight(0).Render(label))
+				cl := zm.Mark(InnerTabCloseZoneID(i), st.InnerActive.Bold(false).PaddingLeft(0).Render(" ×"))
+				tabPart = name + cl
+			} else {
+				name := zm.Mark(InnerTabZoneID(i), st.InnerInactive.PaddingRight(0).Render(label))
+				cl := zm.Mark(InnerTabCloseZoneID(i), st.InnerInactive.PaddingLeft(0).Render(" ×"))
+				tabPart = name + cl
+			}
+		} else {
+			if isActive {
+				tabPart = zm.Mark(InnerTabZoneID(i), st.InnerActive.Render(label))
+			} else {
+				tabPart = zm.Mark(InnerTabZoneID(i), st.InnerInactive.Render(label))
+			}
+		}
+		if !innerFirst {
+			parts = append(parts, sep)
+		}
+		parts = append(parts, tabPart)
+		innerFirst = false
+	}
+
+	for i, t := range cfgTabs {
+		logicalIdx = i
+		if closedCfgTabs[i] {
+			continue
+		}
+		isActive := logicalIdx == activeInner
+		canClose := t.IsInteractive() && (closeTabMode == config.CloseTabButtonAll ||
+			(closeTabMode == config.CloseTabButtonFocus && isActive))
+		appendInnerTab(t.Name, canClose)
+	}
+
+	cfgCount := len(cfgTabs)
+	for j, label := range extraTabs {
+		logicalIdx = cfgCount + j
+		isActive := logicalIdx == activeInner
+		showClose := closeTabMode == config.CloseTabButtonAll ||
+			(closeTabMode == config.CloseTabButtonFocus && isActive)
+		appendInnerTab(label, showClose)
+	}
+
+	// 4. + new-tab button (with a │ separator before it).
+	if showNewTab {
+		newTabPart := zm.Mark(NewTabBtnZoneID(), st.InnerInactive.Render("+"))
+		if !innerFirst {
+			parts = append(parts, sep)
+		}
+		parts = append(parts, newTabPart)
+	}
+
+	// 5. Workspace tabs that follow the active workspace.
+	for i, wt := range worktrees {
+		if i > activeWS {
+			parts = append(parts, renderWSTab(i, wt, false))
+		}
+	}
+
+	row := strings.Join(parts, "")
+	rowWidth := lipgloss.Width(row)
+
+	// Right-hand elements: optional indicator and new-workspace button.
+	indicator := ""
+	if prefixMode {
+		indicator = st.PrefixIndicator.Render(" [PREFIX] ")
+	} else if statusMsg != "" {
+		indicator = st.StatusMsg.Render(" " + statusMsg + " ")
+	}
+
+	newWSPart := ""
+	if showNewWS {
+		newWSPart = zm.Mark(NewWorkspaceBtnZoneID(), st.WorkspaceInactive.Render("+"))
+	}
+
+	// 6. Gap fills the space between the tab content and the right-side elements.
+	remainingWidth := totalWidth - rowWidth - lipgloss.Width(indicator) - lipgloss.Width(newWSPart)
+	if remainingWidth < 0 {
+		remainingWidth = 0
+	}
+	gap := st.WorkspaceBarBg.Render(strings.Repeat(" ", remainingWidth))
+
+	return row + gap + indicator + newWSPart
 }

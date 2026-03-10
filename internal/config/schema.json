@@ -69,6 +69,11 @@
           "description": "Controls when the × close button is shown on workspace tabs: \"all\" always, \"focus\" only on the active workspace, \"none\" never. Defaults to \"none\".",
           "enum": ["all", "focus", "none"],
           "default": "none"
+        },
+        "compact_tabs": {
+          "type": "boolean",
+          "description": "When true, the workspace row and inner tab row are merged into a single unified row. Inactive workspaces flank the active workspace's tabs. Defaults to false.",
+          "default": false
         }
       },
       "additionalProperties": false

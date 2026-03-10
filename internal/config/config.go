@@ -69,6 +69,10 @@ type UIConfig struct {
 	// CloseWorkspaceButton controls which workspace tabs show a clickable × button.
 	// Valid values: "all", "focus", "none". Defaults to "none".
 	CloseWorkspaceButton CloseWorkspaceButton `json:"close_workspace_button,omitempty"`
+	// CompactTabs merges the workspace row and inner tab row into a single row.
+	// When true, inactive workspaces flank the active workspace's inner tabs in one line.
+	// Defaults to false.
+	CompactTabs *bool `json:"compact_tabs,omitempty"`
 }
 
 // GetTheme returns the configured theme name, falling back to "default".
@@ -130,6 +134,15 @@ func (u *UIConfig) GetCloseWorkspaceButton() CloseWorkspaceButton {
 		return CloseWorkspaceButtonNone
 	}
 	return u.CloseWorkspaceButton
+}
+
+// GetCompactTabs returns whether the workspace and inner tab rows should be
+// merged into a single row. Defaults to false when absent.
+func (u *UIConfig) GetCompactTabs() bool {
+	if u == nil || u.CompactTabs == nil {
+		return false
+	}
+	return *u.CompactTabs
 }
 
 // Config is the top-level application configuration.
