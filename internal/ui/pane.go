@@ -189,3 +189,17 @@ func (p *Pane) Exited() bool {
 func (p *Pane) IsInteractive() bool {
 	return p.cfg.IsInteractive()
 }
+
+// CursorInfo returns the cursor column, row (0-indexed), and visibility as
+// tracked by the VT emulator. The outer renderer uses this to reposition the
+// terminal cursor at the correct cell after each frame, instead of leaving it
+// at the end of the last rendered line.
+func (p *Pane) CursorInfo() (col, row int, visible bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.vt == nil {
+		return 0, 0, false
+	}
+	cur := p.vt.Cursor()
+	return cur.X, cur.Y, p.vt.CursorVisible()
+}

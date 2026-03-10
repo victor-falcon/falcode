@@ -17,7 +17,14 @@ const (
 )
 
 // renderVT walks the vt10x terminal grid and produces a full ANSI string.
+// The cursor is rendered as a soft cursor: the reverse-video attribute is
+// XOR-toggled on the cursor cell, making it always visually distinct.
+// This is necessary because bubbletea repositions the terminal hardware cursor
+// to the bottom of the screen after every frame, so we cannot rely on it.
 func renderVT(vt vt10x.Terminal, cols, rows int) string {
+	cur := vt.Cursor()
+	curVisible := vt.CursorVisible()
+
 	var sb strings.Builder
 	var prevFg, prevBg vt10x.Color
 	var prevMode int16
@@ -27,37 +34,44 @@ func renderVT(vt vt10x.Terminal, cols, rows int) string {
 		for col := 0; col < cols; col++ {
 			cell := vt.Cell(col, row)
 
-			if resetNeeded || cell.FG != prevFg || cell.BG != prevBg || cell.Mode != prevMode {
+			// XOR the reverse attribute on the cursor cell to draw a soft
+			// block cursor that is always visible regardless of cell content.
+			mode := cell.Mode
+			if curVisible && col == cur.X && row == cur.Y {
+				mode ^= vtAttrReverse
+			}
+
+			if resetNeeded || cell.FG != prevFg || cell.BG != prevBg || mode != prevMode {
 				sb.WriteString("\x1b[0m") // reset all
 				if cell.BG != vt10x.DefaultBG {
 					sb.WriteString(bgEscape(cell.BG))
 				}
 				fg := cell.FG
 				// Bold + low-colour → bright variant (matches typical terminal behaviour)
-				if cell.Mode&vtAttrBold != 0 && fg < 8 {
+				if mode&vtAttrBold != 0 && fg < 8 {
 					fg += 8
 				}
 				if fg != vt10x.DefaultFG {
 					sb.WriteString(fgEscape(fg))
 				}
-				if cell.Mode&vtAttrBold != 0 {
+				if mode&vtAttrBold != 0 {
 					sb.WriteString("\x1b[1m")
 				}
-				if cell.Mode&vtAttrItalic != 0 {
+				if mode&vtAttrItalic != 0 {
 					sb.WriteString("\x1b[3m")
 				}
-				if cell.Mode&vtAttrUnderline != 0 {
+				if mode&vtAttrUnderline != 0 {
 					sb.WriteString("\x1b[4m")
 				}
-				if cell.Mode&vtAttrBlink != 0 {
+				if mode&vtAttrBlink != 0 {
 					sb.WriteString("\x1b[5m")
 				}
-				if cell.Mode&vtAttrReverse != 0 {
+				if mode&vtAttrReverse != 0 {
 					sb.WriteString("\x1b[7m")
 				}
 				prevFg = cell.FG
 				prevBg = cell.BG
-				prevMode = cell.Mode
+				prevMode = mode
 				resetNeeded = false
 			}
 
