@@ -204,8 +204,10 @@ func (m *Model) View() string {
 	view := tabBar + "\n" + paneContent
 
 	// Footer: context hint (left) and build version (right).
-	footer := RenderFooter(m.keybinds.Prefix, m.version, m.prefixMode, m.width, m.styles)
-	view = view + "\n" + footer
+	if !m.cfg.HideFooter {
+		footer := RenderFooter(m.keybinds.Prefix, m.version, m.prefixMode, m.width, m.styles)
+		view = view + "\n" + footer
+	}
 
 	// Overlay the which-key sheet if visible.
 	if m.sheet.Visible() {
@@ -540,7 +542,10 @@ func (m *Model) tabForKey(key PaneKey) *config.Tab {
 }
 
 func (m *Model) paneHeight() int {
-	h := m.height - TabBarHeight() - FooterHeight()
+	h := m.height - TabBarHeight()
+	if !m.cfg.HideFooter {
+		h -= FooterHeight()
+	}
 	if h < 1 {
 		h = 1
 	}

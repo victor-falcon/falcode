@@ -27,6 +27,7 @@ or an interactive shell side-by-side.`,
 }
 
 func Execute() {
+	rootCmd.AddCommand(writeDefaultConfigCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
