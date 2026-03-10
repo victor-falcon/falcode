@@ -45,7 +45,7 @@ func run(_ *cobra.Command, _ []string) error {
 	// --- Rename zellij pane if running inside a zellij session ---
 	if _, inZellij := os.LookupEnv("ZELLIJ"); inZellij {
 		//nolint:errcheck
-		exec.Command("zellij", "action", "rename-pane", "Falcode").Run()
+		exec.Command("zellij", "action", "rename-pane", "falcode").Run()
 	}
 
 	// --- Load configuration ---
