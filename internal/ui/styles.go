@@ -20,6 +20,10 @@ type uiStyles struct {
 	InnerBarBg     lipgloss.Style
 	InnerSeparator lipgloss.Style
 
+	// New-tab / new-workspace buttons
+	NewTabBtn       lipgloss.Style
+	NewWorkspaceBtn lipgloss.Style
+
 	// Which-key sheet
 	SheetBox   lipgloss.Style
 	SheetTitle lipgloss.Style
@@ -98,6 +102,16 @@ func newStyles(t *config.ThemeColors) uiStyles {
 		InnerSeparator: lipgloss.NewStyle().
 			Foreground(toColor(t.InnerSeparator)).
 			Background(toColor(t.InnerBarBg)),
+
+		NewTabBtn: lipgloss.NewStyle().
+			Foreground(toColor(t.NewTabBtnFg)).
+			Background(toColor(t.NewTabBtnBg)).
+			Padding(0, 1),
+
+		NewWorkspaceBtn: lipgloss.NewStyle().
+			Foreground(toColor(t.NewWorkspaceBtnFg)).
+			Background(toColor(t.NewWorkspaceBtnBg)).
+			Padding(0, 1),
 
 		SheetBox: lipgloss.NewStyle().
 			Background(sheetBg).

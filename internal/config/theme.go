@@ -35,6 +35,12 @@ type ThemeColors struct {
 	InnerBarBg      string `json:"inner_bar_bg"`
 	InnerSeparator  string `json:"inner_separator"`
 
+	// New-tab / new-workspace buttons
+	NewTabBtnBg       string `json:"new_tab_btn_bg"`
+	NewTabBtnFg       string `json:"new_tab_btn_fg"`
+	NewWorkspaceBtnBg string `json:"new_workspace_btn_bg"`
+	NewWorkspaceBtnFg string `json:"new_workspace_btn_fg"`
+
 	// Which-key sheet
 	SheetBg          string `json:"sheet_bg"`
 	SheetBorder      string `json:"sheet_border"`
@@ -91,6 +97,10 @@ func DefaultTheme(scheme string) *ThemeColors {
 			InnerInactiveFg:     "#666666",
 			InnerBarBg:          "#ECECF8",
 			InnerSeparator:      "#C8C8E8",
+			NewTabBtnBg:         "#F0F0F8",
+			NewTabBtnFg:         "#666666",
+			NewWorkspaceBtnBg:   "#F0F0F8",
+			NewWorkspaceBtnFg:   "#666666",
 			SheetBg:             "#F8F8FF",
 			SheetBorder:         "#5B41DF",
 			SheetTitle:          "#A07800",
@@ -116,6 +126,10 @@ func DefaultTheme(scheme string) *ThemeColors {
 		InnerInactiveFg:     "#888888",
 		InnerBarBg:          "#0D0D1A",
 		InnerSeparator:      "#333355",
+		NewTabBtnBg:         "#1E1E2E",
+		NewTabBtnFg:         "#888888",
+		NewWorkspaceBtnBg:   "#1E1E2E",
+		NewWorkspaceBtnFg:   "#888888",
 		SheetBg:             "#1A1A2E",
 		SheetBorder:         "#7B61FF",
 		SheetTitle:          "#FFD700",
@@ -224,6 +238,10 @@ func parseThemeFile(data []byte, scheme string) (*ThemeColors, error) {
 		InnerInactiveFg:     fill(get("inner_inactive_fg"), def.InnerInactiveFg),
 		InnerBarBg:          fill(get("inner_bar_bg"), def.InnerBarBg),
 		InnerSeparator:      fill(get("inner_separator"), def.InnerSeparator),
+		NewTabBtnBg:         fill(get("new_tab_btn_bg"), def.NewTabBtnBg),
+		NewTabBtnFg:         fill(get("new_tab_btn_fg"), def.NewTabBtnFg),
+		NewWorkspaceBtnBg:   fill(get("new_workspace_btn_bg"), def.NewWorkspaceBtnBg),
+		NewWorkspaceBtnFg:   fill(get("new_workspace_btn_fg"), def.NewWorkspaceBtnFg),
 		SheetBg:             fill(get("sheet_bg"), def.SheetBg),
 		SheetBorder:         fill(get("sheet_border"), def.SheetBorder),
 		SheetTitle:          fill(get("sheet_title"), def.SheetTitle),

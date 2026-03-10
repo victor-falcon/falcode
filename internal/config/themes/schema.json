@@ -78,6 +78,22 @@
           "$ref": "#/$defs/colorPair",
           "description": "Color of the separator between inner tabs."
         },
+        "new_tab_btn_bg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the new-tab (+) button."
+        },
+        "new_tab_btn_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground (text) of the new-tab (+) button."
+        },
+        "new_workspace_btn_bg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the new-workspace (+) button."
+        },
+        "new_workspace_btn_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground (text) of the new-workspace (+) button."
+        },
         "sheet_bg": {
           "$ref": "#/$defs/colorPair",
           "description": "Background of the which-key overlay sheet."

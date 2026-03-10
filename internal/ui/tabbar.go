@@ -116,7 +116,7 @@ func renderWorkspaceRow(
 
 	// + new-workspace button immediately after the workspace tabs.
 	if ui.GetNewWorkspaceButton() {
-		newWSPart := zm.Mark(NewWorkspaceBtnZoneID(), st.WorkspaceInactive.Render("+"))
+		newWSPart := zm.Mark(NewWorkspaceBtnZoneID(), st.NewWorkspaceBtn.Render("+"))
 		tabsStr += newWSPart
 	}
 
@@ -217,7 +217,7 @@ func renderInnerRow(
 
 	// + new-tab button at the end.
 	if showNewTab {
-		newTabPart := zm.Mark(NewTabBtnZoneID(), st.InnerInactive.Render("+"))
+		newTabPart := zm.Mark(NewTabBtnZoneID(), st.NewTabBtn.Render("+"))
 		if !first {
 			parts = append(parts, sep)
 		}
@@ -280,21 +280,35 @@ func renderCompactRow(
 	}
 
 	var parts []string
+	sep := st.InnerSeparator.Render("│")
+
+	// wsFirst tracks whether we've emitted any element yet (for leading separator logic).
+	wsFirst := true
+
+	appendWS := func(tab string) {
+		if !wsFirst {
+			parts = append(parts, sep)
+		}
+		parts = append(parts, tab)
+		wsFirst = false
+	}
 
 	// 1. Workspace tabs that precede the active workspace.
 	for i, wt := range worktrees {
 		if i < activeWS {
-			parts = append(parts, renderWSTab(i, wt, false))
+			appendWS(renderWSTab(i, wt, false))
 		}
 	}
 
 	// 2. Active workspace tab.
 	if activeWS < len(worktrees) {
-		parts = append(parts, renderWSTab(activeWS, worktrees[activeWS], true))
+		appendWS(renderWSTab(activeWS, worktrees[activeWS], true))
 	}
 
 	// 3. Inner (per-workspace) tabs with │ separators between them.
-	sep := st.InnerSeparator.Render("│")
+	// innerFirst is separate: we always emit a separator before the first inner
+	// tab to visually separate the workspace section from the inner tab section,
+	// but only when there is at least one workspace tab already rendered.
 	innerFirst := true
 	logicalIdx := 0
 
@@ -320,11 +334,14 @@ func renderCompactRow(
 				tabPart = zm.Mark(InnerTabZoneID(i), st.InnerInactive.Render(label))
 			}
 		}
-		if !innerFirst {
+		// Separator before this inner tab: between inner tabs OR between the
+		// last workspace tab and the first inner tab.
+		if !innerFirst || !wsFirst {
 			parts = append(parts, sep)
 		}
 		parts = append(parts, tabPart)
 		innerFirst = false
+		wsFirst = false
 	}
 
 	for i, t := range cfgTabs {
@@ -349,16 +366,17 @@ func renderCompactRow(
 
 	// 4. + new-tab button (with a │ separator before it).
 	if showNewTab {
-		newTabPart := zm.Mark(NewTabBtnZoneID(), st.InnerInactive.Render("+"))
-		if !innerFirst {
+		newTabPart := zm.Mark(NewTabBtnZoneID(), st.NewTabBtn.Render("+"))
+		if !innerFirst || !wsFirst {
 			parts = append(parts, sep)
 		}
 		parts = append(parts, newTabPart)
 	}
 
-	// 5. Workspace tabs that follow the active workspace.
+	// 5. Workspace tabs that follow the active workspace (with separators).
 	for i, wt := range worktrees {
 		if i > activeWS {
+			parts = append(parts, sep)
 			parts = append(parts, renderWSTab(i, wt, false))
 		}
 	}
@@ -376,7 +394,7 @@ func renderCompactRow(
 
 	newWSPart := ""
 	if showNewWS {
-		newWSPart = zm.Mark(NewWorkspaceBtnZoneID(), st.WorkspaceInactive.Render("+"))
+		newWSPart = zm.Mark(NewWorkspaceBtnZoneID(), st.NewWorkspaceBtn.Render("+"))
 	}
 
 	// 6. Gap fills the space between the tab content and the right-side elements.
