@@ -28,6 +28,7 @@ or an interactive shell side-by-side.`,
 
 func Execute() {
 	rootCmd.AddCommand(writeDefaultConfigCmd)
+	rootCmd.AddCommand(writeDefaultThemeCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -51,7 +52,14 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading keybinds: %w", err)
 	}
 
-	theme, err := config.LoadTheme(cfg.Theme)
+	// Resolve the color scheme before loading the theme.
+	// "system" (and empty) means detect the OS appearance at boot time.
+	scheme := cfg.ThemeScheme
+	if scheme == "" || scheme == "system" {
+		scheme = config.DetectSystemScheme()
+	}
+
+	theme, err := config.LoadTheme(cfg.Theme, scheme)
 	if err != nil {
 		return fmt.Errorf("loading theme: %w", err)
 	}

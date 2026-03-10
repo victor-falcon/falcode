@@ -33,9 +33,10 @@ func (t *Tab) IsInteractive() bool {
 
 // Config is the top-level application configuration.
 type Config struct {
-	Tabs       []*Tab `json:"tabs"`
-	Theme      string `json:"theme,omitempty"`
-	HideFooter bool   `json:"hide_footer"`
+	Tabs        []*Tab `json:"tabs"`
+	Theme       string `json:"theme,omitempty"`
+	ThemeScheme string `json:"theme_scheme,omitempty"` // "system" | "dark" | "light"
+	HideFooter  bool   `json:"hide_footer"`
 }
 
 // Load returns the Config using a 3-priority search:

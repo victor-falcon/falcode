@@ -36,103 +36,114 @@ type uiStyles struct {
 	FooterText lipgloss.Style
 	FooterKey  lipgloss.Style
 
-	// Raw colours for compositing
-	SheetBgColor lipgloss.Color
+	// Raw colour for compositing — may be lipgloss.NoColor{} when transparent.
+	SheetBgColor lipgloss.TerminalColor
+}
+
+// toColor converts a theme color string to a lipgloss.TerminalColor.
+// The special value "transparent" maps to lipgloss.NoColor{}, which tells
+// lipgloss not to set any background/foreground, effectively inheriting the
+// terminal's default (transparent). Any other value is treated as a hex color.
+func toColor(s string) lipgloss.TerminalColor {
+	if s == "transparent" {
+		return lipgloss.NoColor{}
+	}
+	return lipgloss.Color(s)
 }
 
 func newStyles(t *config.ThemeColors) uiStyles {
-	sheetBg := lipgloss.Color(t.SheetBg)
+	sheetBg := toColor(t.SheetBg)
 
 	return uiStyles{
 		WorkspaceActive: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(t.WorkspaceActiveFg)).
-			Background(lipgloss.Color(t.WorkspaceActive)).
+			Foreground(toColor(t.WorkspaceActiveFg)).
+			Background(toColor(t.WorkspaceActive)).
 			Padding(0, 1),
 
 		WorkspaceInactive: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.WorkspaceInactiveFg)).
-			Background(lipgloss.Color(t.WorkspaceInactive)).
+			Foreground(toColor(t.WorkspaceInactiveFg)).
+			Background(toColor(t.WorkspaceInactive)).
 			Padding(0, 1),
 
 		WorkspaceBarBg: lipgloss.NewStyle().
-			Background(lipgloss.Color(t.WorkspaceBarBg)),
+			Background(toColor(t.WorkspaceBarBg)),
 
 		PrefixIndicator: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(t.PrefixIndicatorFg)).
-			Background(lipgloss.Color(t.WorkspaceBarBg)),
+			Foreground(toColor(t.PrefixIndicatorFg)).
+			Background(toColor(t.WorkspaceBarBg)),
 
 		StatusMsg: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.StatusFg)).
-			Background(lipgloss.Color(t.WorkspaceBarBg)),
+			Foreground(toColor(t.StatusFg)).
+			Background(toColor(t.WorkspaceBarBg)),
 
 		InnerActive: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(t.InnerActiveFg)).
-			Background(lipgloss.Color(t.InnerActive)).
+			Foreground(toColor(t.InnerActiveFg)).
+			Background(toColor(t.InnerActive)).
 			Padding(0, 1),
 
 		InnerInactive: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.InnerInactiveFg)).
-			Background(lipgloss.Color(t.InnerInactive)).
+			Foreground(toColor(t.InnerInactiveFg)).
+			Background(toColor(t.InnerInactive)).
 			Padding(0, 1),
 
 		InnerBarBg: lipgloss.NewStyle().
-			Background(lipgloss.Color(t.InnerBarBg)),
+			Background(toColor(t.InnerBarBg)),
 
 		InnerSeparator: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.InnerSeparator)).
-			Background(lipgloss.Color(t.InnerBarBg)),
+			Foreground(toColor(t.InnerSeparator)).
+			Background(toColor(t.InnerBarBg)),
 
 		SheetBox: lipgloss.NewStyle().
 			Background(sheetBg).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(t.SheetBorder)).
+			BorderForeground(toColor(t.SheetBorder)).
 			BorderBackground(sheetBg).
 			Padding(0, 1),
 
 		SheetTitle: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(t.SheetTitle)).
+			Foreground(toColor(t.SheetTitle)).
 			Background(sheetBg),
 
 		SheetKey: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(t.SheetKey)).
+			Foreground(toColor(t.SheetKey)).
 			Background(sheetBg),
 
 		SheetDesc: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.SheetDescription)).
+			Foreground(toColor(t.SheetDescription)).
 			Background(sheetBg),
 
 		SheetGroup: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.SheetGroup)).
+			Foreground(toColor(t.SheetGroup)).
 			Background(sheetBg),
 
 		SheetSep: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.SheetSeparator)).
+			Foreground(toColor(t.SheetSeparator)).
 			Background(sheetBg),
 
 		ExitBanner: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.SheetDescription)).
+			Foreground(toColor(t.SheetDescription)).
 			Background(sheetBg).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(t.SheetBorder)).
+			BorderForeground(toColor(t.SheetBorder)).
 			BorderBackground(sheetBg).
 			Padding(0, 1),
 
 		FooterBg: lipgloss.NewStyle().
-			Background(lipgloss.Color(t.InnerBarBg)),
+			Background(toColor(t.InnerBarBg)),
 
 		FooterText: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.InnerInactiveFg)).
-			Background(lipgloss.Color(t.InnerBarBg)),
+			Foreground(toColor(t.InnerInactiveFg)).
+			Background(toColor(t.InnerBarBg)),
 
 		FooterKey: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(t.SheetKey)).
-			Background(lipgloss.Color(t.InnerBarBg)),
+			Foreground(toColor(t.SheetKey)).
+			Background(toColor(t.InnerBarBg)),
 
 		SheetBgColor: sheetBg,
 	}

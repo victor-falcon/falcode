@@ -8,6 +8,7 @@ func DefaultConfig() *Config {
 			{Name: "Git", Command: "lazygit"},
 			{Name: "Console"},
 		},
-		Theme: "default",
+		Theme:       "default",
+		ThemeScheme: "system",
 	}
 }

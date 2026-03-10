@@ -106,7 +106,7 @@ func RenderSheet(bindings []*config.Keybind, title string, st uiStyles) string {
 		} else {
 			desc = st.SheetDesc.Render(b.Description)
 		}
-		rows = append(rows, key+"  "+desc)
+		rows = append(rows, key+st.SheetDesc.Render("  ")+desc)
 	}
 
 	content := strings.Join(rows, "\n")

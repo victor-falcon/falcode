@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/victor-falcon/falcode/theme.json",
+  "title": "Falcode Theme",
+  "description": "Color theme for the falcode terminal multiplexer. Place this file at ~/.config/falcode/themes/{name}.json and set theme: \"{name}\" in your falcode config.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URL to this schema file."
+    },
+    "defs": {
+      "type": "object",
+      "description": "Named color aliases. Values in 'theme' that match a key here are replaced with the alias value.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}$",
+        "description": "A hex color value, e.g. \"#7B61FF\"."
+      }
+    },
+    "theme": {
+      "type": "object",
+      "description": "Color tokens for each UI element. Each token must define both a dark and a light value. Values can be a hex color or a key from 'defs'.",
+      "properties": {
+        "workspace_active": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the active workspace tab."
+        },
+        "workspace_inactive": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of inactive workspace tabs."
+        },
+        "workspace_active_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground (text) of the active workspace tab."
+        },
+        "workspace_inactive_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground (text) of inactive workspace tabs."
+        },
+        "workspace_bar_bg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the outer workspace tab bar."
+        },
+        "workspace_border": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Border color of the active workspace."
+        },
+        "prefix_indicator_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of the prefix-mode indicator shown in the footer."
+        },
+        "status_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color used for status/error messages in the footer."
+        },
+        "inner_active": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the active inner tab."
+        },
+        "inner_inactive": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of inactive inner tabs."
+        },
+        "inner_active_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground (text) of the active inner tab."
+        },
+        "inner_inactive_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground (text) of inactive inner tabs."
+        },
+        "inner_bar_bg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the inner tab bar row."
+        },
+        "inner_separator": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of the separator between inner tabs."
+        },
+        "sheet_bg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the which-key overlay sheet."
+        },
+        "sheet_border": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Border color of the which-key overlay sheet."
+        },
+        "sheet_title": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of the title text in the which-key sheet."
+        },
+        "sheet_key": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of key labels in the which-key sheet."
+        },
+        "sheet_description": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of description text in the which-key sheet."
+        },
+        "sheet_group": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of group/section headings in the which-key sheet."
+        },
+        "sheet_separator": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Color of separator lines in the which-key sheet."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "colorPair": {
+      "type": "object",
+      "description": "A color with both dark and light scheme variants.",
+      "properties": {
+        "dark": {
+          "type": "string",
+          "description": "Color used when the dark scheme is active. A hex color (#RRGGBB), a key from 'defs', or \"transparent\" to inherit the terminal default."
+        },
+        "light": {
+          "type": "string",
+          "description": "Color used when the light scheme is active. A hex color (#RRGGBB), a key from 'defs', or \"transparent\" to inherit the terminal default."
+        }
+      },
+      "required": ["dark", "light"],
+      "additionalProperties": false
+    }
+  }
+}
