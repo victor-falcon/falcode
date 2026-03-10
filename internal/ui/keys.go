@@ -27,6 +27,12 @@ func keyToBytes(msg tea.KeyMsg) []byte {
 		}
 		return []byte{' '}
 	case tea.KeyEnter: // == tea.KeyCtrlM
+		if msg.Alt {
+			// Ghostty (and others) map Shift+Enter → \x1b\r, which bubbletea
+			// decodes as Alt+Enter. Forward the original two-byte sequence so
+			// that opencode receives it correctly.
+			return []byte{0x1b, '\r'}
+		}
 		return []byte{'\r'}
 	case tea.KeyBackspace:
 		if msg.Alt {
