@@ -1,0 +1,93 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
+	"github.com/spf13/cobra"
+	"github.com/victor-falcon/falcode/internal/config"
+	"github.com/victor-falcon/falcode/internal/git"
+	"github.com/victor-falcon/falcode/internal/ui"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "falcode",
+	Short: "Terminal multiplexer for multi-agent git worktree workflows",
+	Long: `falcode opens a tab-based terminal UI where each tab is a git worktree.
+Within each workspace, configurable inner tabs run tools like opencode, lazygit,
+or an interactive shell side-by-side.`,
+	RunE: run,
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(_ *cobra.Command, _ []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	// --- Load configuration ---
+	cfg, err := config.Load(cwd)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	keybinds, err := config.LoadKeybinds()
+	if err != nil {
+		return fmt.Errorf("loading keybinds: %w", err)
+	}
+
+	theme, err := config.LoadTheme(cfg.Theme)
+	if err != nil {
+		return fmt.Errorf("loading theme: %w", err)
+	}
+
+	// --- Discover git worktrees ---
+	worktrees, err := git.Discover(cwd)
+	if err != nil {
+		return fmt.Errorf(
+			"discovering worktrees (is this a git repo?): %w", err,
+		)
+	}
+
+	// --- Query terminal size ---
+	cols, rows, err := term.GetSize(os.Stdout.Fd())
+	if err != nil {
+		cols, rows = 80, 24 // safe fallback
+	}
+
+	// --- Build model and program ---
+	model := ui.New(cfg, keybinds, theme, worktrees, cols, rows)
+
+	prog := tea.NewProgram(
+		model,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+		// Don't intercept Ctrl+C so it can pass through to the active PTY.
+		tea.WithoutSignalHandler(),
+	)
+
+	// Give the model a reference to prog.Send so that background goroutines
+	// (PTY readers) can dispatch messages into the event loop.
+	model.SetSend(prog.Send)
+
+	// Eagerly start the initial (first) pane.
+	model.StartAll()
+
+	// --- Run ---
+	if _, err := prog.Run(); err != nil {
+		return fmt.Errorf("program error: %w", err)
+	}
+
+	// Gracefully terminate all PTY processes.
+	model.StopAll()
+	return nil
+}
