@@ -28,6 +28,7 @@ or an interactive shell side-by-side.`,
 }
 
 func Execute() {
+	rootCmd.Version = Version
 	rootCmd.AddCommand(writeDefaultConfigCmd)
 	rootCmd.AddCommand(writeDefaultThemeCmd)
 	if err := rootCmd.Execute(); err != nil {
