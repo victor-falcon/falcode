@@ -195,8 +195,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
-		for _, p := range m.panes {
-			p.Resize(m.width, m.paneHeight())
+		for key, p := range m.panes {
+			tab := m.tabForKey(key)
+			p.Resize(m.paneColsForTab(tab), m.paneHeight())
 		}
 		return m, nil
 
@@ -276,7 +277,9 @@ func (m *Model) View() string {
 	)
 
 	paneContent := ""
-	if pane := m.activePane(); pane != nil {
+	pane := m.activePane()
+	isConsolePane := pane != nil && pane.IsInteractive()
+	if pane != nil {
 		paneContent = pane.View()
 	}
 
@@ -285,12 +288,20 @@ func (m *Model) View() string {
 	for len(paneLines) < m.paneHeight() {
 		paneLines = append(paneLines, strings.Repeat(" ", m.width))
 	}
+
+	// Console (interactive) panes get 1-cell horizontal padding on each side.
+	if isConsolePane {
+		for i, line := range paneLines {
+			paneLines[i] = " " + line + " "
+		}
+	}
+
 	paneContent = strings.Join(paneLines, "\n")
 
 	// Overlay a restart banner centered over the pane area when a
 	// non-interactive (command) pane has stopped. This is done before joining
 	// with the tab bar so the tab bar is never affected.
-	if pane := m.activePane(); pane != nil && pane.Exited() && !pane.IsInteractive() {
+	if pane != nil && pane.Exited() && !pane.IsInteractive() {
 		banner := m.styles.ExitBanner.Render("process stopped  ·  press Enter to restart")
 		paneContent = overlayCentered(paneContent, banner, m.width, m.paneHeight())
 	}
@@ -1077,7 +1088,7 @@ func (m *Model) ensurePaneCmd(key PaneKey) tea.Cmd {
 		return nil
 	}
 	wt := m.worktrees[key.Workspace]
-	p := NewPane(key, tab, wt.Path, m.width, m.paneHeight())
+	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
 	m.panes[key] = p
 	send := m.send
 	return func() tea.Msg {
@@ -1101,7 +1112,7 @@ func (m *Model) ensurePaneStarted(key PaneKey) {
 		return
 	}
 	wt := m.worktrees[key.Workspace]
-	p := NewPane(key, tab, wt.Path, m.width, m.paneHeight())
+	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
 	m.panes[key] = p
 	p.Start(m.send) //nolint:errcheck
 }
@@ -1127,6 +1138,18 @@ func (m *Model) paneHeight() int {
 		h = 1
 	}
 	return h
+}
+
+// paneColsForTab returns the PTY column count for a given tab.
+// Console (interactive) tabs lose 2 columns for the 1-cell paddingX on each side.
+func (m *Model) paneColsForTab(tab *config.Tab) int {
+	if tab != nil && tab.IsInteractive() {
+		if m.width > 2 {
+			return m.width - 2
+		}
+		return 1
+	}
+	return m.width
 }
 
 // ============================================================
