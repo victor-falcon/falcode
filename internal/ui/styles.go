@@ -31,6 +31,9 @@ type uiStyles struct {
 	// Exit / restart banner
 	ExitBanner lipgloss.Style
 
+	// Warning / danger text (used in delete-confirmation dialog)
+	WarningMsg lipgloss.Style
+
 	// Footer bar
 	FooterBg   lipgloss.Style
 	FooterText lipgloss.Style
@@ -132,6 +135,11 @@ func newStyles(t *config.ThemeColors) uiStyles {
 			BorderForeground(toColor(t.SheetBorder)).
 			BorderBackground(sheetBg).
 			Padding(0, 1),
+
+		WarningMsg: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF5F5F")).
+			Background(sheetBg),
 
 		FooterBg: lipgloss.NewStyle().
 			Background(toColor(t.InnerBarBg)),

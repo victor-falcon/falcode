@@ -9,6 +9,7 @@ const (
 	ActionCloseTab        = "close_tab"
 	ActionNextWorkspace   = "next_workspace"
 	ActionPrevWorkspace   = "prev_workspace"
+	ActionNewWorkspace    = "new_workspace"
 	ActionDeleteWorkspace = "delete_workspace"
 	ActionPassthrough     = "passthrough"
 	ActionGoToTab         = "go_to_tab"
@@ -95,7 +96,8 @@ func DefaultKeybinds() *KeybindsConfig {
 				Bindings: []*Keybind{
 					{Key: "n", Description: "Next workspace", Action: ActionNextWorkspace},
 					{Key: "p", Description: "Previous workspace", Action: ActionPrevWorkspace},
-					{Key: "d", Description: "Delete workspace", Actions: []string{ActionDeleteWorkspace, ActionLock}},
+					{Key: "c", Description: "Create workspace", Actions: []string{ActionNewWorkspace, ActionLock}},
+					{Key: "x", Description: "Delete workspace", Actions: []string{ActionDeleteWorkspace, ActionLock}},
 				},
 			},
 		},

@@ -15,6 +15,7 @@ const (
 	zoneInnerPrefix     = "it-"
 	zoneInnerClose      = "it-close-"
 	zoneNewTabBtn       = "new-tab-btn"
+	zoneNewWorkspaceBtn = "new-ws-btn"
 )
 
 // WorkspaceTabZoneID returns the bubblezone ID for a workspace tab.
@@ -28,6 +29,9 @@ func InnerTabCloseZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneInnerC
 
 // NewTabBtnZoneID returns the bubblezone ID for the + new-tab button.
 func NewTabBtnZoneID() string { return zoneNewTabBtn }
+
+// NewWorkspaceBtnZoneID returns the bubblezone ID for the + new-workspace button.
+func NewWorkspaceBtnZoneID() string { return zoneNewWorkspaceBtn }
 
 // TabBarHeight returns the number of rows the tab bar occupies (2: workspace + inner).
 func TabBarHeight() int { return 2 }
@@ -46,7 +50,7 @@ func RenderTabBar(
 	ui *config.UIConfig,
 	st uiStyles,
 ) string {
-	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, st)
+	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, st)
 	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, activeInner, totalWidth, ui, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
@@ -58,6 +62,7 @@ func renderWorkspaceRow(
 	activeWS, totalWidth int,
 	prefixMode bool,
 	statusMsg string,
+	ui *config.UIConfig,
 	st uiStyles,
 ) string {
 	var tabs []string
@@ -73,6 +78,13 @@ func renderWorkspaceRow(
 	}
 
 	tabsStr := strings.Join(tabs, "")
+
+	// + new-workspace button immediately after the workspace tabs.
+	if ui.GetNewWorkspaceButton() {
+		newWSPart := zm.Mark(NewWorkspaceBtnZoneID(), st.WorkspaceInactive.Render("+"))
+		tabsStr += newWSPart
+	}
+
 	tabsWidth := lipgloss.Width(tabsStr)
 
 	// Indicator on the right: PREFIX mode or status message.

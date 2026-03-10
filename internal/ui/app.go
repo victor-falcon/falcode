@@ -21,6 +21,20 @@ type layerState struct {
 // animTickMsg drives the sheet spring animation.
 type animTickMsg struct{}
 
+// WorkspaceCreatedMsg is dispatched by the background goroutine when a new
+// git worktree has been successfully created.
+type WorkspaceCreatedMsg struct{ Worktree *git.Worktree }
+
+// WorkspaceCreateErrMsg is dispatched when worktree creation fails.
+type WorkspaceCreateErrMsg struct{ Err error }
+
+// WorkspaceDirtyCheckMsg carries the result of the dirty-state check that
+// runs before showing the delete-confirmation dialog.
+type WorkspaceDirtyCheckMsg struct {
+	WS    int
+	Dirty bool
+}
+
 // Model is the root bubbletea model.
 type Model struct {
 	cfg      *config.Config
@@ -67,6 +81,19 @@ type Model struct {
 	namingTab    bool
 	tabNameInput textinput.Model
 
+	// Workspace creation prompt state.
+	// Step 0: ask for workspace name; step 1: ask for branch name.
+	namingWS      bool
+	wsNamingStep  int
+	wsNameInput   textinput.Model
+	wsBranchInput textinput.Model
+	wsPendingName string // workspace name captured at step 0
+
+	// Workspace deletion confirmation state.
+	confirmDeleteWS bool
+	wsDeleteDirty   bool
+	wsDeleteTarget  int // workspace index captured when delete was initiated
+
 	// Status message displayed in the tab bar gap.
 	statusMsg     string
 	statusClearAt time.Time
@@ -98,6 +125,13 @@ func New(
 	ti.Placeholder = "tab name"
 	ti.CharLimit = 32
 
+	wsName := textinput.New()
+	wsName.Placeholder = "workspace name"
+	wsName.CharLimit = 64
+
+	wsBranch := textinput.New()
+	wsBranch.CharLimit = 128
+
 	return &Model{
 		cfg:           cfg,
 		keybinds:      keybinds,
@@ -113,6 +147,8 @@ func New(
 		height:        rows,
 		sheet:         NewSheet(),
 		tabNameInput:  ti,
+		wsNameInput:   wsName,
+		wsBranchInput: wsBranch,
 		currentLayer:  keybinds.Bindings,
 		layerTitle:    "falcode",
 		version:       version,
@@ -162,6 +198,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.setStatus(fmt.Sprintf("process exited: %v", msg.Err))
 		}
+		return m, nil
+
+	case WorkspaceCreatedMsg:
+		// Insert the new worktree at the end and switch to it.
+		m.worktrees = append(m.worktrees, msg.Worktree)
+		m.extraTabs = append(m.extraTabs, []string{})
+		m.closedCfgTabs = append(m.closedCfgTabs, make(map[int]bool))
+		return m, m.switchWorkspaceCmd(len(m.worktrees) - 1)
+
+	case WorkspaceCreateErrMsg:
+		m.setStatus(fmt.Sprintf("create workspace: %v", msg.Err))
+		return m, nil
+
+	case WorkspaceDirtyCheckMsg:
+		m.confirmDeleteWS = true
+		m.wsDeleteDirty = msg.Dirty
+		m.wsDeleteTarget = msg.WS
 		return m, nil
 
 	case animTickMsg:
@@ -228,6 +281,18 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, prompt, m.width, m.paneHeight())
 	}
 
+	// Overlay the workspace name prompt when the user is creating a new workspace.
+	if m.namingWS {
+		prompt := m.renderWSNamePrompt()
+		paneContent = overlayCentered(paneContent, prompt, m.width, m.paneHeight())
+	}
+
+	// Overlay the workspace delete confirmation dialog.
+	if m.confirmDeleteWS {
+		dialog := m.renderDeleteWSConfirm()
+		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
+	}
+
 	view := tabBar + "\n" + paneContent
 
 	// Footer: context hint (left) and build version (right).
@@ -253,6 +318,16 @@ func (m *Model) View() string {
 // ============================================================
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Workspace naming prompt intercepts all keys (highest priority).
+	if m.namingWS {
+		return m.handleWSNamingKey(msg)
+	}
+
+	// Workspace delete confirmation intercepts all keys.
+	if m.confirmDeleteWS {
+		return m.handleWSDeleteConfirmKey(msg)
+	}
+
 	// Tab naming prompt intercepts all keys.
 	if m.namingTab {
 		switch msg.Type {
@@ -371,6 +446,12 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// + new-workspace button.
+	if zi := m.zm.Get(NewWorkspaceBtnZoneID()); zi != nil && zi.InBounds(msg) {
+		m.startWSNamePrompt()
+		return m, nil
+	}
+
 	return m, nil
 }
 
@@ -405,8 +486,16 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 			cmds = append(cmds, m.switchWorkspaceCmd((m.activeWS+1)%len(m.worktrees)))
 		case config.ActionPrevWorkspace:
 			cmds = append(cmds, m.switchWorkspaceCmd(m.wrapWS(m.activeWS-1)))
+		case config.ActionNewWorkspace:
+			m.startWSNamePrompt()
 		case config.ActionDeleteWorkspace:
-			cmds = append(cmds, m.deleteWorkspaceCmd())
+			if len(m.worktrees) <= 1 {
+				m.setStatus("cannot delete the only workspace")
+			} else if m.worktrees[m.activeWS].IsMain {
+				m.setStatus("cannot delete the main worktree")
+			} else {
+				cmds = append(cmds, m.checkDirtyAndConfirmDeleteCmd(m.activeWS))
+			}
 		case config.ActionPassthrough:
 			m.passthroughPrefix()
 		}
@@ -484,31 +573,24 @@ func (m *Model) closeTab(idx int) {
 	}
 }
 
-func (m *Model) deleteWorkspaceCmd() tea.Cmd {
-	if len(m.worktrees) <= 1 {
-		m.setStatus("cannot delete the only workspace")
-		return nil
-	}
-	if m.worktrees[m.activeWS].IsMain {
-		m.setStatus("cannot delete the main worktree")
-		return nil
-	}
-
-	wt := m.worktrees[m.activeWS]
+// executeDeleteWorkspaceCmd tears down the workspace at wsIdx and schedules
+// the async git worktree remove. Guards (only workspace, main worktree) must
+// have been checked before calling this.
+func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
+	wt := m.worktrees[wsIdx]
 
 	// Stop and remove all panes for this workspace.
 	for key, p := range m.panes {
-		if key.Workspace == m.activeWS {
+		if key.Workspace == wsIdx {
 			p.Stop()
 			delete(m.panes, key)
 		}
 	}
 
 	// Remove the worktree from our lists.
-	deleted := m.activeWS
-	m.worktrees = append(m.worktrees[:deleted], m.worktrees[deleted+1:]...)
-	m.extraTabs = append(m.extraTabs[:deleted], m.extraTabs[deleted+1:]...)
-	m.closedCfgTabs = append(m.closedCfgTabs[:deleted], m.closedCfgTabs[deleted+1:]...)
+	m.worktrees = append(m.worktrees[:wsIdx], m.worktrees[wsIdx+1:]...)
+	m.extraTabs = append(m.extraTabs[:wsIdx], m.extraTabs[wsIdx+1:]...)
+	m.closedCfgTabs = append(m.closedCfgTabs[:wsIdx], m.closedCfgTabs[wsIdx+1:]...)
 	if m.activeWS >= len(m.worktrees) {
 		m.activeWS = len(m.worktrees) - 1
 	}
@@ -517,7 +599,7 @@ func (m *Model) deleteWorkspaceCmd() tea.Cmd {
 	// Re-index pane keys for workspaces that shifted down.
 	newPanes := make(map[PaneKey]*Pane, len(m.panes))
 	for key, p := range m.panes {
-		if key.Workspace > deleted {
+		if key.Workspace > wsIdx {
 			key.Workspace--
 		}
 		newPanes[key] = p
@@ -550,6 +632,119 @@ func (m *Model) passthroughPrefix() {
 			pane.Write(b)
 		}
 	}
+}
+
+// ============================================================
+// Workspace creation
+// ============================================================
+
+// startWSNamePrompt begins the two-step workspace naming flow.
+func (m *Model) startWSNamePrompt() {
+	m.namingWS = true
+	m.wsNamingStep = 0
+	m.wsPendingName = ""
+	m.wsNameInput.SetValue("")
+	m.wsNameInput.Focus()
+	m.wsBranchInput.SetValue("")
+	m.wsBranchInput.Blur()
+}
+
+// handleWSNamingKey processes keys while the workspace naming prompt is active.
+func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.namingWS = false
+		m.wsNameInput.Blur()
+		m.wsBranchInput.Blur()
+		return m, nil
+
+	case tea.KeyEnter:
+		if m.wsNamingStep == 0 {
+			// Step 0 → capture workspace name, advance to branch step.
+			name := strings.TrimSpace(m.wsNameInput.Value())
+			if name == "" {
+				// No name entered; stay on step 0.
+				return m, nil
+			}
+			m.wsPendingName = name
+			m.wsNamingStep = 1
+			m.wsNameInput.Blur()
+			m.wsBranchInput.SetValue("")
+			m.wsBranchInput.Placeholder = name // hint: press Enter to reuse
+			m.wsBranchInput.Focus()
+			return m, nil
+		}
+
+		// Step 1 → branch name (empty = reuse workspace name).
+		branchName := strings.TrimSpace(m.wsBranchInput.Value())
+		if branchName == "" {
+			branchName = m.wsPendingName
+		}
+		wsName := m.wsPendingName
+		m.namingWS = false
+		m.wsNameInput.Blur()
+		m.wsBranchInput.Blur()
+		return m, m.createWorkspaceCmd(wsName, branchName)
+	}
+
+	// Forward keystrokes to the active input.
+	var cmd tea.Cmd
+	if m.wsNamingStep == 0 {
+		m.wsNameInput, cmd = m.wsNameInput.Update(msg)
+	} else {
+		m.wsBranchInput, cmd = m.wsBranchInput.Update(msg)
+	}
+	return m, cmd
+}
+
+// createWorkspaceCmd runs git worktree creation in the background and
+// dispatches WorkspaceCreatedMsg or WorkspaceCreateErrMsg when done.
+func (m *Model) createWorkspaceCmd(worktreeName, branchName string) tea.Cmd {
+	repoRoot := m.repoRoot
+	return func() tea.Msg {
+		wt, err := git.Create(repoRoot, worktreeName, branchName)
+		if err != nil {
+			return WorkspaceCreateErrMsg{Err: err}
+		}
+		return WorkspaceCreatedMsg{Worktree: wt}
+	}
+}
+
+// ============================================================
+// Workspace deletion confirmation
+// ============================================================
+
+// checkDirtyAndConfirmDeleteCmd runs git status for the target workspace in
+// the background, then dispatches WorkspaceDirtyCheckMsg so the UI can show
+// the confirmation dialog.
+func (m *Model) checkDirtyAndConfirmDeleteCmd(wsIdx int) tea.Cmd {
+	wtPath := m.worktrees[wsIdx].Path
+	return func() tea.Msg {
+		dirty := git.HasUncommittedChanges(wtPath)
+		return WorkspaceDirtyCheckMsg{WS: wsIdx, Dirty: dirty}
+	}
+}
+
+// handleWSDeleteConfirmKey processes y/n while the delete confirmation dialog
+// is shown.
+func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.confirmDeleteWS = false
+		return m, nil
+	}
+
+	switch strings.ToLower(string(msg.Runes)) {
+	case "y":
+		wsIdx := m.wsDeleteTarget
+		m.confirmDeleteWS = false
+		return m, m.executeDeleteWorkspaceCmd(wsIdx)
+	case "n":
+		m.confirmDeleteWS = false
+		return m, nil
+	}
+
+	return m, nil
 }
 
 // ============================================================
@@ -671,6 +866,50 @@ func (m *Model) renderTabNamePrompt() string {
 	sep := st.SheetSep.Render(strings.Repeat("─", 24))
 	input := m.tabNameInput.View()
 	content := strings.Join([]string{title, sep, input}, "\n")
+	return st.SheetBox.Render(content)
+}
+
+func (m *Model) renderWSNamePrompt() string {
+	st := m.styles
+	var titleStr string
+	var inputView string
+	if m.wsNamingStep == 0 {
+		titleStr = "New Workspace — Name"
+		inputView = m.wsNameInput.View()
+	} else {
+		titleStr = "New Workspace — Branch"
+		inputView = m.wsBranchInput.View()
+	}
+	title := st.SheetTitle.Render(titleStr)
+	sep := st.SheetSep.Render(strings.Repeat("─", 28))
+	content := strings.Join([]string{title, sep, inputView}, "\n")
+	return st.SheetBox.Render(content)
+}
+
+func (m *Model) renderDeleteWSConfirm() string {
+	st := m.styles
+	wsIdx := m.wsDeleteTarget
+	var wsName string
+	if wsIdx >= 0 && wsIdx < len(m.worktrees) {
+		wsName = m.worktrees[wsIdx].Name()
+	}
+
+	title := st.SheetTitle.Render(fmt.Sprintf("Delete '%s'?", wsName))
+	sep := st.SheetSep.Render(strings.Repeat("─", 28))
+
+	var lines []string
+	lines = append(lines, title, sep)
+
+	if m.wsDeleteDirty {
+		lines = append(lines,
+			st.WarningMsg.Render("Uncommitted changes will be lost!"),
+			st.SheetDesc.Render(""),
+		)
+	}
+
+	lines = append(lines, st.SheetDesc.Render("[y] confirm   [n] / Esc cancel"))
+
+	content := strings.Join(lines, "\n")
 	return st.SheetBox.Render(content)
 }
 

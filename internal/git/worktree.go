@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -89,4 +90,64 @@ func Remove(repoRoot, worktreePath string) error {
 		return fmt.Errorf("git worktree remove: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// Create creates a new git worktree at ~/.faldot/worktrees/{folderName}/{worktreeName}.
+// If branchName already exists locally it is checked out; otherwise it is created
+// from the current HEAD. Returns the newly created Worktree on success.
+func Create(repoRoot, worktreeName, branchName string) (*Worktree, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home dir: %w", err)
+	}
+
+	folderName := filepath.Base(repoRoot)
+	worktreePath := filepath.Join(home, ".faldot", "worktrees", folderName, worktreeName)
+
+	// Ensure the parent directory exists; git worktree add creates the leaf but
+	// not intermediate directories.
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		return nil, fmt.Errorf("create worktree parent dir: %w", err)
+	}
+
+	// Decide whether to check out an existing branch or create a new one.
+	var gitCmd *exec.Cmd
+	if branchExists(repoRoot, branchName) {
+		gitCmd = exec.Command("git", "worktree", "add", worktreePath, branchName)
+	} else {
+		gitCmd = exec.Command("git", "worktree", "add", "-b", branchName, worktreePath)
+	}
+	gitCmd.Dir = repoRoot
+	if out, err := gitCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+
+	// Resolve HEAD of the newly created worktree.
+	headOut, _ := exec.Command("git", "-C", worktreePath, "rev-parse", "HEAD").Output()
+	head := strings.TrimSpace(string(headOut))
+
+	return &Worktree{
+		Path:   worktreePath,
+		Branch: branchName,
+		Head:   head,
+		IsMain: false,
+	}, nil
+}
+
+// branchExists returns true when branchName is a local branch in repoRoot.
+func branchExists(repoRoot, branchName string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	cmd.Dir = repoRoot
+	return cmd.Run() == nil
+}
+
+// HasUncommittedChanges reports whether the worktree at path has any tracked or
+// untracked changes (using git status --porcelain).
+func HasUncommittedChanges(worktreePath string) bool {
+	out, err := exec.Command("git", "-C", worktreePath, "status", "--porcelain").Output()
+	if err != nil {
+		// If git fails (e.g. detached HEAD, bare), assume dirty to be safe.
+		return true
+	}
+	return strings.TrimSpace(string(out)) != ""
 }

@@ -51,6 +51,9 @@ type UIConfig struct {
 	// NewTabButton shows a clickable + at the end of the inner tab bar.
 	// Defaults to true when omitted.
 	NewTabButton *bool `json:"new_tab_button,omitempty"`
+	// NewWorkspaceButton shows a clickable + at the end of the workspace tab bar.
+	// Defaults to true when omitted.
+	NewWorkspaceButton *bool `json:"new_workspace_button,omitempty"`
 	// CloseTabButton controls which extra tabs show a clickable × button.
 	// Valid values: "all", "focus", "none". Defaults to "focus".
 	CloseTabButton CloseTabButton `json:"close_tab_button,omitempty"`
@@ -88,6 +91,15 @@ func (u *UIConfig) GetNewTabButton() bool {
 		return true
 	}
 	return *u.NewTabButton
+}
+
+// GetNewWorkspaceButton returns whether the + new-workspace button should be
+// rendered on the workspace tab bar. Defaults to true when the field is absent.
+func (u *UIConfig) GetNewWorkspaceButton() bool {
+	if u == nil || u.NewWorkspaceButton == nil {
+		return true
+	}
+	return *u.NewWorkspaceButton
 }
 
 // GetCloseTabButton returns the resolved CloseTabButton value.
