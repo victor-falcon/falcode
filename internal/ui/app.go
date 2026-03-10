@@ -443,7 +443,27 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		return m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
 
 	case 127: // Backspace
-		return m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+		if modifier <= 1 {
+			// Plain backspace — let handleKey deal with modals/panes as normal.
+			return m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+		}
+		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
+		// correct byte sequence. Block while a modal is consuming input.
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+			return m, nil
+		}
+		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			// Alt+Backspace → \x1b\x7f (word-delete backward, understood by
+			// readline, zsh, bash, and most shells).
+			alt := (modifier-1)&2 != 0
+			if alt {
+				pane.Write([]byte{0x1b, 127})
+			} else {
+				// Other modifier combos — forward the raw Kitty sequence.
+				pane.Write(raw)
+			}
+		}
+		return m, nil
 
 	default:
 		// Check if this Kitty-encoded key matches the configured prefix key.
