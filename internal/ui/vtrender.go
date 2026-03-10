@@ -99,8 +99,14 @@ func fgEscape(c vt10x.Color) string {
 		return fmt.Sprintf("\x1b[%dm", 30+int(c))
 	case c < 16:
 		return fmt.Sprintf("\x1b[%dm", 90+int(c)-8)
+	case c < 256:
+		return fmt.Sprintf("\x1b[38;5;%dm", int(c))
 	default:
-		return fmt.Sprintf("\x1b[38;5;%dm", int(c)-17)
+		// Truecolor: vt10x stores RGB as r<<16 | g<<8 | b
+		r := (c >> 16) & 0xFF
+		g := (c >> 8) & 0xFF
+		b := c & 0xFF
+		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
 	}
 }
 
@@ -112,7 +118,13 @@ func bgEscape(c vt10x.Color) string {
 		return fmt.Sprintf("\x1b[%dm", 40+int(c))
 	case c < 16:
 		return fmt.Sprintf("\x1b[%dm", 100+int(c)-8)
+	case c < 256:
+		return fmt.Sprintf("\x1b[48;5;%dm", int(c))
 	default:
-		return fmt.Sprintf("\x1b[48;5;%dm", int(c)-17)
+		// Truecolor: vt10x stores RGB as r<<16 | g<<8 | b
+		r := (c >> 16) & 0xFF
+		g := (c >> 8) & 0xFF
+		b := c & 0xFF
+		return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
 	}
 }

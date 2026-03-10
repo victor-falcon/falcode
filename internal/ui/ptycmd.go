@@ -20,6 +20,7 @@ func newPtyCmd(shell string, args []string, dir string) *ptyCmd {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
 	)
 	return &ptyCmd{Cmd: cmd}
 }

@@ -79,7 +79,7 @@ func run(_ *cobra.Command, _ []string) error {
 	prog := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		tea.WithMouseAllMotion(),
 		// Don't intercept Ctrl+C so it can pass through to the active PTY.
 		tea.WithoutSignalHandler(),
 	)
@@ -90,6 +90,12 @@ func run(_ *cobra.Command, _ []string) error {
 
 	// Eagerly start the initial (first) pane.
 	model.StartAll()
+
+	// Restore the previous keyboard mode when the program exits.
+	// The Kitty keyboard protocol enable (\x1b[>1u) is sent from Init() after
+	// bubbletea has finished its own terminal setup, so it is not reset by the
+	// alt-screen or mouse initialisation sequences.
+	defer os.Stdout.WriteString("\x1b[<u") //nolint:errcheck
 
 	// --- Run ---
 	if _, err := prog.Run(); err != nil {

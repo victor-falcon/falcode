@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -175,7 +177,16 @@ func (m *Model) StopAll() {
 }
 
 // Init implements tea.Model.
-func (m *Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tea.Cmd {
+	// Enable the Kitty keyboard protocol (level 1 – disambiguate escape codes)
+	// after bubbletea has finished its own terminal setup (alt screen, mouse,
+	// etc.). Sending it before prog.Run() risks being overwritten by bubbletea's
+	// initialisation sequences.
+	return func() tea.Msg {
+		os.Stdout.WriteString("\x1b[>1u") //nolint:errcheck
+		return nil
+	}
+}
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -234,10 +245,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		// bubbletea wraps unrecognized escape sequences (e.g. Shift+Enter via
 		// the Kitty keyboard protocol: ESC [ 13 ; 2 u) as the unexported
-		// unknownCSISequenceMsg type, which is a named []byte slice. Forward
-		// these raw bytes to the active PTY so that the process running inside
-		// (e.g. opencode) can handle them correctly.
-		m.handleUnknownMsg(msg)
+		// unknownCSISequenceMsg type, which is a named []byte slice. Decode
+		// and route them so that falcode's own keys (Enter, Esc, Tab,
+		// Backspace) keep working while modifier variants reach the active PTY.
+		return m.handleUnknownMsg(msg)
 	}
 
 	return m, nil
@@ -326,29 +337,123 @@ func (m *Model) View() string {
 // Key handling
 // ============================================================
 
-// handleUnknownMsg forwards unrecognized input byte sequences to the active
-// PTY. bubbletea reports sequences it cannot parse (e.g. Shift+Enter sent as
-// ESC [ 13 ; 2 u by Kitty-keyboard-protocol terminals) as the unexported
-// unknownCSISequenceMsg type, which is a named []byte slice. We use reflect to
-// extract the raw bytes and write them to the PTY so that the process running
-// inside (e.g. opencode) receives the full escape sequence and can act on it.
-func (m *Model) handleUnknownMsg(msg tea.Msg) {
-	// Modals consume all input; don't leak bytes to the PTY while they're open.
-	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
-		return
-	}
-
+// handleUnknownMsg decodes unrecognized input byte sequences and routes them
+// appropriately. bubbletea reports sequences it cannot parse (e.g. keys sent
+// via the Kitty keyboard protocol) as the unexported unknownCSISequenceMsg
+// type, which is a named []byte slice.
+//
+// When Kitty keyboard protocol is active the terminal re-encodes several
+// formerly ambiguous keys (Enter → ESC[13u, Esc → ESC[27u, Tab → ESC[9u,
+// Backspace → ESC[127u). We translate those back into the corresponding
+// tea.KeyMsg values so that falcode's own UI (modals, prefix mode) continues
+// to work correctly, while modifier variants (e.g. Shift+Enter → ESC[13;2u)
+// are forwarded verbatim to the active PTY.
+func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	v := reflect.ValueOf(msg)
 	if v.Kind() != reflect.Slice || v.Type().Elem().Kind() != reflect.Uint8 {
-		return
+		return m, nil
 	}
 	raw := v.Bytes()
 	if len(raw) == 0 {
-		return
+		return m, nil
 	}
 
+	// Try to decode as a Kitty keyboard protocol CSI sequence first.
+	if kc, mod, ok := parseKittySeq(raw); ok {
+		return m.handleKittyKey(kc, mod, raw)
+	}
+
+	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
+	// while a modal or prefix mode is consuming input.
+	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+		return m, nil
+	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
 		pane.Write(raw)
+	}
+	return m, nil
+}
+
+// parseKittySeq parses a Kitty keyboard protocol CSI sequence of the form
+//
+//	ESC [ <keycode> u  or  ESC [ <keycode> ; <modifier> u
+//
+// and returns the key code (Unicode codepoint), the modifier value (1 = none,
+// 2 = shift, 3 = alt, 5 = ctrl, …), and ok=true on success.
+func parseKittySeq(raw []byte) (keycode, modifier int, ok bool) {
+	if len(raw) < 4 || raw[0] != 0x1b || raw[1] != '[' || raw[len(raw)-1] != 'u' {
+		return 0, 0, false
+	}
+	inner := string(raw[2 : len(raw)-1])
+	parts := strings.SplitN(inner, ";", 2)
+	kc, err := strconv.Atoi(parts[0])
+	if err != nil || kc <= 0 {
+		return 0, 0, false
+	}
+	mod := 1
+	if len(parts) == 2 {
+		m, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return 0, 0, false
+		}
+		mod = m
+	}
+	return kc, mod, true
+}
+
+// handleKittyKey routes a decoded Kitty keyboard protocol key event.
+//
+// The modifier encoding is: modifier = 1 + bitmask where bit0=shift,
+// bit1=alt, bit2=ctrl. So modifier==1 means no modifiers.
+//
+// Keys that falcode itself cares about (Enter, Esc, Tab, Backspace) are
+// translated into the equivalent tea.KeyMsg and forwarded to handleKey so
+// that modals and prefix mode keep working. Modifier variants of those keys
+// (e.g. Shift+Enter) and all other Kitty sequences are written verbatim to
+// the active PTY.
+func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, tea.Cmd) {
+	modBits := modifier - 1 // 0 = no modifier, bit0=shift, bit1=alt, bit2=ctrl
+	shift := modBits&1 != 0
+
+	switch keycode {
+	case 13: // Enter
+		if modifier <= 1 {
+			// Plain Enter — let handleKey deal with modals/panes as normal.
+			return m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		}
+		// Shift+Enter — forward as \x1b[13;2u (Kitty CSI u format) to PTY.
+		// opencode's key parser handles this format: charCode=13, modifier=2
+		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
+		// Block while a modal is open.
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+			return m, nil
+		}
+		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			pane.Write([]byte("\x1b[13;2u"))
+		}
+		return m, nil
+
+	case 27: // Escape
+		return m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+
+	case 9: // Tab
+		if shift {
+			return m.handleKey(tea.KeyMsg{Type: tea.KeyShiftTab})
+		}
+		return m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+
+	case 127: // Backspace
+		return m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+
+	default:
+		// Unknown key — forward raw to PTY when not in a modal.
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+			return m, nil
+		}
+		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			pane.Write(raw)
+		}
+		return m, nil
 	}
 }
 
@@ -450,6 +555,9 @@ func (m *Model) handleLayerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		// Non-left-press events: forward to PTY if they land in the pane area,
+		// then return — they are never used for falcode's own UI elements.
+		m.forwardMouseToPTY(msg)
 		return m, nil
 	}
 
@@ -490,7 +598,84 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Left-click landed in the pane area — forward to the active PTY.
+	m.forwardMouseToPTY(msg)
+
 	return m, nil
+}
+
+// forwardMouseToPTY converts a tea.MouseMsg into an SGR mouse escape sequence
+// and writes it to the active PTY. Coordinates are translated from the outer
+// terminal's absolute (X, Y) to pane-relative coordinates by subtracting the
+// tab bar height from Y. Events that fall within the tab bar rows are ignored.
+// SGR format: ESC [ < Cb ; Cx ; Cy M  (press/motion)
+//
+//	ESC [ < Cb ; Cx ; Cy m  (release)
+func (m *Model) forwardMouseToPTY(msg tea.MouseMsg) {
+	pane := m.activePane()
+	if pane == nil || pane.Exited() {
+		return
+	}
+
+	// Translate to pane-relative coordinates (1-indexed for SGR).
+	tabH := TabBarHeight(m.cfg.UI)
+	paneRow := msg.Y - tabH // 0-indexed pane row
+	if paneRow < 0 {
+		// Click is in the tab bar — do not forward.
+		return
+	}
+	cx := msg.X + 1   // SGR is 1-indexed
+	cy := paneRow + 1 // SGR is 1-indexed
+
+	// Encode Cb: button bits + modifier bits.
+	// Button base values (SGR): left=0, middle=1, right=2, release=3,
+	// wheel-up=64, wheel-down=65, wheel-left=66, wheel-right=67.
+	// Motion adds 32. Shift adds 4, Alt adds 8, Ctrl adds 16.
+	var cb int
+	switch msg.Button {
+	case tea.MouseButtonLeft:
+		cb = 0
+	case tea.MouseButtonMiddle:
+		cb = 1
+	case tea.MouseButtonRight:
+		cb = 2
+	case tea.MouseButtonNone:
+		cb = 3 // release
+	case tea.MouseButtonWheelUp:
+		cb = 64
+	case tea.MouseButtonWheelDown:
+		cb = 65
+	case tea.MouseButtonWheelLeft:
+		cb = 66
+	case tea.MouseButtonWheelRight:
+		cb = 67
+	default:
+		return // unsupported button
+	}
+
+	if msg.Action == tea.MouseActionMotion {
+		cb |= 32
+	}
+	if msg.Shift {
+		cb |= 4
+	}
+	if msg.Alt {
+		cb |= 8
+	}
+	if msg.Ctrl {
+		cb |= 16
+	}
+
+	// Final byte: M = press or motion, m = release.
+	final := 'M'
+	isWheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown ||
+		msg.Button == tea.MouseButtonWheelLeft || msg.Button == tea.MouseButtonWheelRight
+	if msg.Action == tea.MouseActionRelease && !isWheel {
+		final = 'm'
+	}
+
+	seq := fmt.Sprintf("\x1b[<%d;%d;%d%c", cb, cx, cy, final)
+	pane.Write([]byte(seq))
 }
 
 // ============================================================
