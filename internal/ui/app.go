@@ -841,9 +841,13 @@ func (m *Model) closeTab(idx int) {
 func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
 	wt := m.worktrees[wsIdx]
 
-	// Stop and remove all panes for this workspace.
+	// Stop and remove all panes for this workspace, collecting their done
+	// channels so we can wait for the processes to fully exit before removing
+	// the worktree directory.
+	var doneChans []chan struct{}
 	for key, p := range m.panes {
 		if key.Workspace == wsIdx {
+			doneChans = append(doneChans, p.done)
 			p.Stop()
 			delete(m.panes, key)
 		}
@@ -871,6 +875,12 @@ func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
 	repoRoot := m.repoRoot
 	wtPath := wt.Path
 	return func() tea.Msg {
+		// Wait for all pane processes to fully exit before removing the
+		// worktree directory; Stop() only closes the PTY but the child
+		// process may still be alive for a moment.
+		for _, ch := range doneChans {
+			<-ch
+		}
 		if err := git.Remove(repoRoot, wtPath); err != nil {
 			return PaneExitMsg{Err: fmt.Errorf("git worktree remove: %w", err)}
 		}
