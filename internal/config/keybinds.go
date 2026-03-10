@@ -76,6 +76,11 @@ func DefaultKeybinds() *KeybindsConfig {
 		Prefix: "ctrl+b",
 		Bindings: []*Keybind{
 			{
+				Key:         "ctrl+b",
+				Description: "Send ctrl+b to pane",
+				Actions:     []string{ActionPassthrough, ActionLock},
+			},
+			{
 				Key:         "q",
 				Description: "Quit",
 				Action:      ActionQuit,
