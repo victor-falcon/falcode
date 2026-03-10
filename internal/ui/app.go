@@ -874,6 +874,7 @@ func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
 
 	repoRoot := m.repoRoot
 	wtPath := wt.Path
+	branch := wt.Branch
 	return func() tea.Msg {
 		// Wait for all pane processes to fully exit before removing the
 		// worktree directory; Stop() only closes the PTY but the child
@@ -881,7 +882,7 @@ func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
 		for _, ch := range doneChans {
 			<-ch
 		}
-		if err := git.Remove(repoRoot, wtPath); err != nil {
+		if err := git.Remove(repoRoot, wtPath, branch); err != nil {
 			return PaneExitMsg{Err: fmt.Errorf("git worktree remove: %w", err)}
 		}
 		return nil

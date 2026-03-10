@@ -82,13 +82,22 @@ func parsePorcelain(output string) ([]*Worktree, error) {
 	return worktrees, nil
 }
 
-// Remove runs `git worktree remove --force <path>` from repoRoot.
-func Remove(repoRoot, worktreePath string) error {
+// Remove runs `git worktree remove --force <path>` from repoRoot, then
+// deletes the local branch with `git branch -D <branch>`.
+func Remove(repoRoot, worktreePath, branch string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git worktree remove: %s: %w", strings.TrimSpace(string(out)), err)
 	}
+
+	// Best-effort local branch deletion; ignore errors (e.g. detached HEAD).
+	if branch != "" && branch != "(detached)" && branch != "(bare)" {
+		del := exec.Command("git", "branch", "-D", branch)
+		del.Dir = repoRoot
+		del.Run() //nolint:errcheck
+	}
+
 	return nil
 }
 
