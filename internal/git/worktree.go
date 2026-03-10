@@ -83,7 +83,8 @@ func parsePorcelain(output string) ([]*Worktree, error) {
 }
 
 // Remove runs `git worktree remove --force <path>` from repoRoot, then
-// deletes the local branch with `git branch -D <branch>`.
+// deletes the local branch with `git branch -D <branch>`, and finally
+// removes the worktree folder (and its now-empty parent) from disk.
 func Remove(repoRoot, worktreePath, branch string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	cmd.Dir = repoRoot
@@ -96,6 +97,18 @@ func Remove(repoRoot, worktreePath, branch string) error {
 		del := exec.Command("git", "branch", "-D", branch)
 		del.Dir = repoRoot
 		del.Run() //nolint:errcheck
+	}
+
+	// Ensure the worktree folder is fully removed from disk. git worktree
+	// remove --force may leave the directory behind if it contains untracked
+	// files that are not part of the index.
+	os.RemoveAll(worktreePath) //nolint:errcheck
+
+	// Remove the parent directory if it is now empty (the per-repo bucket
+	// directory created by Create, e.g. ~/.falcode/worktrees/{folderName}).
+	parent := filepath.Dir(worktreePath)
+	if entries, err := os.ReadDir(parent); err == nil && len(entries) == 0 {
+		os.Remove(parent) //nolint:errcheck
 	}
 
 	return nil
