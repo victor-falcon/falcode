@@ -38,6 +38,7 @@ func RenderTabBar(
 	worktrees []*git.Worktree,
 	innerTabs []*config.Tab,
 	extraTabs []string, // dynamically added console tab labels
+	closedCfgTabs map[int]bool, // per-workspace hidden built-in tab indices
 	activeWS, activeInner int,
 	totalWidth int,
 	prefixMode bool,
@@ -46,7 +47,7 @@ func RenderTabBar(
 	st uiStyles,
 ) string {
 	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, st)
-	innerRow := renderInnerRow(zm, innerTabs, extraTabs, activeInner, totalWidth, ui, st)
+	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, activeInner, totalWidth, ui, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
 
@@ -97,6 +98,7 @@ func renderInnerRow(
 	zm *zone.Manager,
 	cfgTabs []*config.Tab,
 	extraTabs []string,
+	closedCfgTabs map[int]bool, // which built-in tab indices are hidden this workspace
 	activeInner, totalWidth int,
 	ui *config.UIConfig,
 	st uiStyles,
@@ -104,27 +106,20 @@ func renderInnerRow(
 	closeMode := ui.GetCloseTabButton()
 	showNewTab := ui.GetNewTabButton()
 
-	// Combine configured tabs and dynamically-added ones.
-	allLabels := make([]string, 0, len(cfgTabs)+len(extraTabs))
-	for _, t := range cfgTabs {
-		allLabels = append(allLabels, t.Name)
-	}
-	allLabels = append(allLabels, extraTabs...)
-
-	cfgCount := len(cfgTabs) // built-in tabs cannot be closed
 	sep := st.InnerSeparator.Render("│")
 
+	// logicalIdx tracks the absolute tab index (used for zone IDs and activeInner).
+	logicalIdx := 0
+	first := true
+
 	var parts []string
-	for i, label := range allLabels {
-		isActive := i == activeInner
-		isExtra := i >= cfgCount
-		showClose := isExtra && (closeMode == config.CloseTabButtonAll ||
-			(closeMode == config.CloseTabButtonFocus && isActive))
+
+	renderTab := func(label string, showClose bool) {
+		isActive := logicalIdx == activeInner
+		i := logicalIdx
 
 		var tabPart string
 		if showClose {
-			// Split the tab into two zones: label (switches tab) and × (closes tab).
-			// The label loses its right padding; the × carries left spacing + right padding.
 			if isActive {
 				namePart := zm.Mark(InnerTabZoneID(i), st.InnerActive.PaddingRight(0).Render(label))
 				closePart := zm.Mark(InnerTabCloseZoneID(i), st.InnerActive.Bold(false).PaddingLeft(0).Render(" ×"))
@@ -144,16 +139,39 @@ func renderInnerRow(
 			tabPart = zm.Mark(InnerTabZoneID(i), styled)
 		}
 
-		if i > 0 {
+		if !first {
 			parts = append(parts, sep)
 		}
 		parts = append(parts, tabPart)
+		first = false
+	}
+
+	// Built-in (config) tabs.
+	for i, t := range cfgTabs {
+		logicalIdx = i
+		if closedCfgTabs[i] {
+			continue // hidden for this workspace — skip rendering, keep logical index
+		}
+		isActive := logicalIdx == activeInner
+		canClose := t.IsInteractive() && (closeMode == config.CloseTabButtonAll ||
+			(closeMode == config.CloseTabButtonFocus && isActive))
+		renderTab(t.Name, canClose)
+	}
+
+	// Extra (dynamically created) tabs — always closeable when closeMode allows.
+	cfgCount := len(cfgTabs)
+	for j, label := range extraTabs {
+		logicalIdx = cfgCount + j
+		isActive := logicalIdx == activeInner
+		showClose := closeMode == config.CloseTabButtonAll ||
+			(closeMode == config.CloseTabButtonFocus && isActive)
+		renderTab(label, showClose)
 	}
 
 	// + new-tab button at the end.
 	if showNewTab {
 		newTabPart := zm.Mark(NewTabBtnZoneID(), st.InnerInactive.Render("+"))
-		if len(parts) > 0 {
+		if !first {
 			parts = append(parts, sep)
 		}
 		parts = append(parts, newTabPart)

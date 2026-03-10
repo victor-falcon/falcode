@@ -89,27 +89,33 @@ func New(
 		extraTabs[i] = []string{}
 	}
 
+	closedCfgTabs := make([]map[int]bool, len(worktrees))
+	for i := range closedCfgTabs {
+		closedCfgTabs[i] = make(map[int]bool)
+	}
+
 	ti := textinput.New()
 	ti.Placeholder = "tab name"
 	ti.CharLimit = 32
 
 	return &Model{
-		cfg:          cfg,
-		keybinds:     keybinds,
-		styles:       newStyles(theme),
-		zm:           zm,
-		worktrees:    worktrees,
-		repoRoot:     worktrees[0].Path,
-		cfgTabs:      cfg.Tabs,
-		extraTabs:    extraTabs,
-		panes:        make(map[PaneKey]*Pane),
-		width:        cols,
-		height:       rows,
-		sheet:        NewSheet(),
-		tabNameInput: ti,
-		currentLayer: keybinds.Bindings,
-		layerTitle:   "falcode",
-		version:      version,
+		cfg:           cfg,
+		keybinds:      keybinds,
+		styles:        newStyles(theme),
+		zm:            zm,
+		worktrees:     worktrees,
+		repoRoot:      worktrees[0].Path,
+		cfgTabs:       cfg.Tabs,
+		extraTabs:     extraTabs,
+		closedCfgTabs: closedCfgTabs,
+		panes:         make(map[PaneKey]*Pane),
+		width:         cols,
+		height:        rows,
+		sheet:         NewSheet(),
+		tabNameInput:  ti,
+		currentLayer:  keybinds.Bindings,
+		layerTitle:    "falcode",
+		version:       version,
 	}
 }
 
@@ -186,6 +192,7 @@ func (m *Model) View() string {
 		m.worktrees,
 		m.cfgTabs,
 		m.extraTabs[m.activeWS],
+		m.closedCfgTabs[m.activeWS],
 		m.activeWS,
 		m.activeInner,
 		m.width,
@@ -432,9 +439,27 @@ func (m *Model) closeCurrentTab() {
 
 func (m *Model) closeTab(idx int) {
 	if idx < len(m.cfgTabs) {
-		m.setStatus("cannot close a built-in tab")
+		// Built-in tab: only closeable when interactive (no command).
+		tab := m.cfgTabs[idx]
+		if !tab.IsInteractive() {
+			m.setStatus("cannot close a tab with a command")
+			return
+		}
+		// Stop the pane if running, then hide it per-workspace.
+		key := PaneKey{Workspace: m.activeWS, Tab: idx}
+		if p, ok := m.panes[key]; ok {
+			p.Stop()
+			delete(m.panes, key)
+		}
+		m.closedCfgTabs[m.activeWS][idx] = true
+		// Move active tab to the nearest still-visible tab.
+		if m.activeInner == idx {
+			m.activeInner = m.prevVisibleTab(m.activeWS, idx)
+		}
 		return
 	}
+
+	// Extra tab.
 	extraIdx := idx - len(m.cfgTabs)
 	key := PaneKey{Workspace: m.activeWS, Tab: idx}
 	if p, ok := m.panes[key]; ok {
@@ -483,6 +508,7 @@ func (m *Model) deleteWorkspaceCmd() tea.Cmd {
 	deleted := m.activeWS
 	m.worktrees = append(m.worktrees[:deleted], m.worktrees[deleted+1:]...)
 	m.extraTabs = append(m.extraTabs[:deleted], m.extraTabs[deleted+1:]...)
+	m.closedCfgTabs = append(m.closedCfgTabs[:deleted], m.closedCfgTabs[deleted+1:]...)
 	if m.activeWS >= len(m.worktrees) {
 		m.activeWS = len(m.worktrees) - 1
 	}
@@ -663,6 +689,35 @@ func (m *Model) currentStatus() string {
 // ============================================================
 // Index helpers
 // ============================================================
+
+// prevVisibleTab returns the nearest visible tab index strictly before closedIdx
+// for the given workspace. It walks backwards through cfgTabs (skipping closed
+// ones), then falls back to the last extraTab, and finally returns 0.
+func (m *Model) prevVisibleTab(ws, closedIdx int) int {
+	closed := m.closedCfgTabs[ws]
+	// Search backwards through cfgTabs (indices 0 … len(cfgTabs)-1).
+	for i := closedIdx - 1; i >= 0; i-- {
+		if i < len(m.cfgTabs) {
+			if !closed[i] {
+				return i
+			}
+		} else {
+			// It's an extra tab — always visible.
+			return i
+		}
+	}
+	// Nothing before closedIdx; fall back to the first visible tab from the front.
+	for i := 0; i < len(m.cfgTabs); i++ {
+		if !closed[i] {
+			return i
+		}
+	}
+	// If somehow all cfgTabs are closed, land on the first extra tab.
+	if len(m.extraTabs[ws]) > 0 {
+		return len(m.cfgTabs)
+	}
+	return 0
+}
 
 func (m *Model) wrapInner(idx int) int {
 	total := len(m.cfgTabs) + len(m.extraTabs[m.activeWS])
