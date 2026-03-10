@@ -92,7 +92,7 @@ func Remove(repoRoot, worktreePath string) error {
 	return nil
 }
 
-// Create creates a new git worktree at ~/.faldot/worktrees/{folderName}/{worktreeName}.
+// Create creates a new git worktree at ~/.falcode/worktrees/{folderName}/{worktreeName}.
 // If branchName already exists locally it is checked out; otherwise it is created
 // from the current HEAD. Returns the newly created Worktree on success.
 func Create(repoRoot, worktreeName, branchName string) (*Worktree, error) {
@@ -102,7 +102,7 @@ func Create(repoRoot, worktreeName, branchName string) (*Worktree, error) {
 	}
 
 	folderName := filepath.Base(repoRoot)
-	worktreePath := filepath.Join(home, ".faldot", "worktrees", folderName, worktreeName)
+	worktreePath := filepath.Join(home, ".falcode", "worktrees", folderName, worktreeName)
 
 	// Ensure the parent directory exists; git worktree add creates the leaf but
 	// not intermediate directories.
