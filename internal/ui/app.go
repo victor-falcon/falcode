@@ -418,8 +418,11 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Workspace (outer) tabs.
+	// Workspace (outer) tabs — close button takes priority over tab switch.
 	for i := range m.worktrees {
+		if zi := m.zm.Get(WorkspaceCloseZoneID(i)); zi != nil && zi.InBounds(msg) {
+			return m, m.deleteWorkspaceCmd(i)
+		}
 		if zi := m.zm.Get(WorkspaceTabZoneID(i)); zi != nil && zi.InBounds(msg) {
 			return m, m.switchWorkspaceCmd(i)
 		}
@@ -489,13 +492,7 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 		case config.ActionNewWorkspace:
 			m.startWSNamePrompt()
 		case config.ActionDeleteWorkspace:
-			if len(m.worktrees) <= 1 {
-				m.setStatus("cannot delete the only workspace")
-			} else if m.worktrees[m.activeWS].IsMain {
-				m.setStatus("cannot delete the main worktree")
-			} else {
-				cmds = append(cmds, m.checkDirtyAndConfirmDeleteCmd(m.activeWS))
-			}
+			cmds = append(cmds, m.deleteWorkspaceCmd(m.activeWS))
 		case config.ActionPassthrough:
 			m.passthroughPrefix()
 		}
@@ -511,6 +508,20 @@ func (m *Model) switchWorkspaceCmd(idx int) tea.Cmd {
 	m.activeWS = idx
 	m.activeInner = 0
 	return m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: 0})
+}
+
+// deleteWorkspaceCmd runs the same guard checks as ActionDeleteWorkspace and, when
+// the workspace is deletable, triggers the dirty-check + confirmation flow.
+func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
+	if len(m.worktrees) <= 1 {
+		m.setStatus("cannot delete the only workspace")
+		return nil
+	}
+	if m.worktrees[wsIdx].IsMain {
+		m.setStatus("cannot delete the main worktree")
+		return nil
+	}
+	return m.checkDirtyAndConfirmDeleteCmd(wsIdx)
 }
 
 func (m *Model) switchInnerTab(idx int) {

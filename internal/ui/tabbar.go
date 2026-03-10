@@ -12,6 +12,7 @@ import (
 
 const (
 	zoneWorkspacePrefix = "ws-"
+	zoneWorkspaceClose  = "ws-close-"
 	zoneInnerPrefix     = "it-"
 	zoneInnerClose      = "it-close-"
 	zoneNewTabBtn       = "new-tab-btn"
@@ -20,6 +21,9 @@ const (
 
 // WorkspaceTabZoneID returns the bubblezone ID for a workspace tab.
 func WorkspaceTabZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneWorkspacePrefix, idx) }
+
+// WorkspaceCloseZoneID returns the bubblezone ID for a workspace tab's × button.
+func WorkspaceCloseZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneWorkspaceClose, idx) }
 
 // InnerTabZoneID returns the bubblezone ID for an inner tab.
 func InnerTabZoneID(idx int) string { return fmt.Sprintf("%s%d", zoneInnerPrefix, idx) }
@@ -65,16 +69,36 @@ func renderWorkspaceRow(
 	ui *config.UIConfig,
 	st uiStyles,
 ) string {
+	closeMode := ui.GetCloseWorkspaceButton()
+
 	var tabs []string
 	for i, wt := range worktrees {
 		label := wt.Name()
-		var styled string
-		if i == activeWS {
-			styled = st.WorkspaceActive.Render(label)
+		isActive := i == activeWS
+		// The × is only meaningful on deletable workspaces (non-main, not the last one).
+		canClose := !wt.IsMain && len(worktrees) > 1 &&
+			(closeMode == config.CloseWorkspaceButtonAll ||
+				(closeMode == config.CloseWorkspaceButtonFocus && isActive))
+
+		var tabStr string
+		if canClose {
+			if isActive {
+				namePart := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.PaddingRight(0).Render(label))
+				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
+				tabStr = namePart + closePart
+			} else {
+				namePart := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.PaddingRight(0).Render(label))
+				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceInactive.PaddingLeft(0).Render(" ×"))
+				tabStr = namePart + closePart
+			}
 		} else {
-			styled = st.WorkspaceInactive.Render(label)
+			if isActive {
+				tabStr = zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.Render(label))
+			} else {
+				tabStr = zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.Render(label))
+			}
 		}
-		tabs = append(tabs, zm.Mark(WorkspaceTabZoneID(i), styled))
+		tabs = append(tabs, tabStr)
 	}
 
 	tabsStr := strings.Join(tabs, "")

@@ -40,6 +40,15 @@ const (
 	CloseTabButtonNone  CloseTabButton = "none"
 )
 
+// CloseWorkspaceButton controls when the × close button is shown on workspace tabs.
+type CloseWorkspaceButton string
+
+const (
+	CloseWorkspaceButtonAll   CloseWorkspaceButton = "all"
+	CloseWorkspaceButtonFocus CloseWorkspaceButton = "focus"
+	CloseWorkspaceButtonNone  CloseWorkspaceButton = "none"
+)
+
 // UIConfig holds all UI display options.
 type UIConfig struct {
 	// Theme is the name of the color theme to use. Defaults to "default".
@@ -57,6 +66,9 @@ type UIConfig struct {
 	// CloseTabButton controls which extra tabs show a clickable × button.
 	// Valid values: "all", "focus", "none". Defaults to "focus".
 	CloseTabButton CloseTabButton `json:"close_tab_button,omitempty"`
+	// CloseWorkspaceButton controls which workspace tabs show a clickable × button.
+	// Valid values: "all", "focus", "none". Defaults to "none".
+	CloseWorkspaceButton CloseWorkspaceButton `json:"close_workspace_button,omitempty"`
 }
 
 // GetTheme returns the configured theme name, falling back to "default".
@@ -109,6 +121,15 @@ func (u *UIConfig) GetCloseTabButton() CloseTabButton {
 		return CloseTabButtonFocus
 	}
 	return u.CloseTabButton
+}
+
+// GetCloseWorkspaceButton returns the resolved CloseWorkspaceButton value.
+// Defaults to CloseWorkspaceButtonNone when absent.
+func (u *UIConfig) GetCloseWorkspaceButton() CloseWorkspaceButton {
+	if u == nil || u.CloseWorkspaceButton == "" {
+		return CloseWorkspaceButtonNone
+	}
+	return u.CloseWorkspaceButton
 }
 
 // Config is the top-level application configuration.

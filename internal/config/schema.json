@@ -53,11 +53,22 @@
           "description": "When true (default), a clickable + button is shown at the end of the inner tab bar.",
           "default": true
         },
+        "new_workspace_button": {
+          "type": "boolean",
+          "description": "When true (default), a clickable + button is shown at the end of the workspace tab bar.",
+          "default": true
+        },
         "close_tab_button": {
           "type": "string",
           "description": "Controls when the × close button is shown on inner tabs: \"all\" always, \"focus\" only on the active tab, \"none\" never.",
           "enum": ["all", "focus", "none"],
           "default": "focus"
+        },
+        "close_workspace_button": {
+          "type": "string",
+          "description": "Controls when the × close button is shown on workspace tabs: \"all\" always, \"focus\" only on the active workspace, \"none\" never. Defaults to \"none\".",
+          "enum": ["all", "focus", "none"],
+          "default": "none"
         }
       },
       "additionalProperties": false
