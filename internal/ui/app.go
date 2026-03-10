@@ -253,7 +253,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleLayerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ESC always exits to lock mode immediately, regardless of layer depth.
 	if msg.Type == tea.KeyEsc {
+		m.exitPrefixMode()
+		return m, nil
+	}
+
+	// Backspace navigates up one level, or exits to lock if already at root.
+	if msg.Type == tea.KeyBackspace {
 		if len(m.layerStack) > 0 {
 			m.popLayer()
 			return m, nil
@@ -311,31 +318,38 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // ============================================================
 
 func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
-	m.exitPrefixMode()
-	switch b.Action {
-	case config.ActionQuit:
-		return tea.Quit
-	case config.ActionNextTab:
-		m.switchInnerTab(m.wrapInner(m.activeInner + 1))
-		return m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner})
-	case config.ActionPrevTab:
-		m.switchInnerTab(m.wrapInner(m.activeInner - 1))
-		return m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner})
-	case config.ActionNewTab:
-		m.addExtraTab()
-		return m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner})
-	case config.ActionCloseTab:
-		m.closeCurrentTab()
-	case config.ActionNextWorkspace:
-		return m.switchWorkspaceCmd((m.activeWS + 1) % len(m.worktrees))
-	case config.ActionPrevWorkspace:
-		return m.switchWorkspaceCmd(m.wrapWS(m.activeWS - 1))
-	case config.ActionDeleteWorkspace:
-		return m.deleteWorkspaceCmd()
-	case config.ActionPassthrough:
-		m.passthroughPrefix()
+	var cmds []tea.Cmd
+
+	for _, action := range b.ActionList() {
+		switch action {
+		case config.ActionLock:
+			m.exitPrefixMode()
+		case config.ActionQuit:
+			// Quit terminates the program immediately; no further actions run.
+			return tea.Quit
+		case config.ActionNextTab:
+			m.switchInnerTab(m.wrapInner(m.activeInner + 1))
+			cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
+		case config.ActionPrevTab:
+			m.switchInnerTab(m.wrapInner(m.activeInner - 1))
+			cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
+		case config.ActionNewTab:
+			m.addExtraTab()
+			cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
+		case config.ActionCloseTab:
+			m.closeCurrentTab()
+		case config.ActionNextWorkspace:
+			cmds = append(cmds, m.switchWorkspaceCmd((m.activeWS+1)%len(m.worktrees)))
+		case config.ActionPrevWorkspace:
+			cmds = append(cmds, m.switchWorkspaceCmd(m.wrapWS(m.activeWS-1)))
+		case config.ActionDeleteWorkspace:
+			cmds = append(cmds, m.deleteWorkspaceCmd())
+		case config.ActionPassthrough:
+			m.passthroughPrefix()
+		}
 	}
-	return nil
+
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) switchWorkspaceCmd(idx int) tea.Cmd {

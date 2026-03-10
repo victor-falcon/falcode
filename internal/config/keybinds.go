@@ -1,12 +1,5 @@
 package config
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-)
-
 // Action names understood by the UI layer.
 const (
 	ActionQuit            = "quit"
@@ -20,22 +13,42 @@ const (
 	ActionPassthrough     = "passthrough"
 	ActionGoToTab         = "go_to_tab"
 	ActionGoToWorkspace   = "go_to_workspace"
+	// ActionLock exits prefix mode after the current action chain completes.
+	// Without it in the chain, the user stays in the current layer.
+	ActionLock = "lock"
 )
 
 // Keybind represents a single binding entry. It is either:
-//   - A leaf action (Action != "") with an optional Params map.
+//   - A leaf action (Action or Actions set) with an optional Params map.
 //   - A group/layer (Bindings != nil) that opens a sub-menu.
+//
+// Use Action for convenience when only one action is needed, or Actions to
+// chain multiple actions (e.g. ["close_tab", "lock"]).
 type Keybind struct {
 	Key         string         `json:"key"`
 	Label       string         `json:"label,omitempty"`
 	Description string         `json:"description"`
-	Action      string         `json:"action,omitempty"`
+	Action      string         `json:"action,omitempty"`  // single action shorthand
+	Actions     []string       `json:"actions,omitempty"` // multi-action chain
 	Params      map[string]any `json:"params,omitempty"`
 	Bindings    []*Keybind     `json:"bindings,omitempty"`
 }
 
 // IsGroup returns true when this keybind opens a sub-layer.
 func (k *Keybind) IsGroup() bool { return len(k.Bindings) > 0 }
+
+// ActionList returns the effective list of actions to execute for this
+// keybind. If Actions is set it takes precedence; otherwise the singular
+// Action field is wrapped in a slice.
+func (k *Keybind) ActionList() []string {
+	if len(k.Actions) > 0 {
+		return k.Actions
+	}
+	if k.Action != "" {
+		return []string{k.Action}
+	}
+	return nil
+}
 
 // DisplayLabel returns Label if set, otherwise Key.
 func (k *Keybind) DisplayLabel() string {
@@ -51,27 +64,12 @@ type KeybindsConfig struct {
 	Bindings []*Keybind `json:"bindings"`
 }
 
-// LoadKeybinds loads from ~/.config/falcode/keybinds.json or returns the defaults.
-func LoadKeybinds() (*KeybindsConfig, error) {
-	p := filepath.Join(os.Getenv("HOME"), ".config", "falcode", "keybinds.json")
-	data, err := os.ReadFile(p)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return DefaultKeybinds(), nil
-		}
-		return nil, fmt.Errorf("reading keybinds %s: %w", p, err)
-	}
-	var kb KeybindsConfig
-	if err := json.Unmarshal(data, &kb); err != nil {
-		return nil, fmt.Errorf("parsing keybinds %s: %w", p, err)
-	}
-	if kb.Prefix == "" {
-		kb.Prefix = "ctrl+b"
-	}
-	return &kb, nil
-}
-
 // DefaultKeybinds returns the built-in keybind configuration.
+//
+// Navigation actions (next/prev tab, next/prev workspace) intentionally omit
+// the "lock" action so the user stays in the current layer and can press the
+// key repeatedly. Structural/one-off actions include "lock" to return to the
+// locked (normal) state after execution.
 func DefaultKeybinds() *KeybindsConfig {
 	return &KeybindsConfig{
 		Prefix: "ctrl+b",
@@ -82,18 +80,13 @@ func DefaultKeybinds() *KeybindsConfig {
 				Action:      ActionQuit,
 			},
 			{
-				Key:         "ctrl+b",
-				Description: "Send prefix to terminal",
-				Action:      ActionPassthrough,
-			},
-			{
 				Key:         "t",
 				Description: "Tab",
 				Bindings: []*Keybind{
 					{Key: "n", Description: "Next tab", Action: ActionNextTab},
 					{Key: "p", Description: "Previous tab", Action: ActionPrevTab},
-					{Key: "c", Description: "New console tab", Action: ActionNewTab},
-					{Key: "x", Description: "Close tab", Action: ActionCloseTab},
+					{Key: "c", Description: "New console tab", Actions: []string{ActionNewTab, ActionLock}},
+					{Key: "x", Description: "Close tab", Actions: []string{ActionCloseTab, ActionLock}},
 				},
 			},
 			{
@@ -102,7 +95,7 @@ func DefaultKeybinds() *KeybindsConfig {
 				Bindings: []*Keybind{
 					{Key: "n", Description: "Next workspace", Action: ActionNextWorkspace},
 					{Key: "p", Description: "Previous workspace", Action: ActionPrevWorkspace},
-					{Key: "d", Description: "Delete workspace", Action: ActionDeleteWorkspace},
+					{Key: "d", Description: "Delete workspace", Actions: []string{ActionDeleteWorkspace, ActionLock}},
 				},
 			},
 		},

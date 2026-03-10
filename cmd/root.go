@@ -47,11 +47,6 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	keybinds, err := config.LoadKeybinds()
-	if err != nil {
-		return fmt.Errorf("loading keybinds: %w", err)
-	}
-
 	// Resolve the color scheme before loading the theme.
 	// "system" (and empty) means detect the OS appearance at boot time.
 	scheme := cfg.ThemeScheme
@@ -79,7 +74,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	// --- Build model and program ---
-	model := ui.New(cfg, keybinds, theme, worktrees, cols, rows, Version)
+	model := ui.New(cfg, cfg.Keybinds, theme, worktrees, cols, rows, Version)
 
 	prog := tea.NewProgram(
 		model,

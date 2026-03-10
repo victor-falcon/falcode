@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/victor-falcon/falcode/config.json",
+  "title": "Falcode Config",
+  "description": "Configuration for the falcode terminal multiplexer. Place this file at ~/.config/falcode/config.json or <project>/falcode.json.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URL to this schema file."
+    },
+    "tabs": {
+      "type": "array",
+      "description": "Inner tabs shown inside every workspace. Tabs without a command run an interactive shell.",
+      "items": {
+        "$ref": "#/$defs/tab"
+      },
+      "minItems": 1
+    },
+    "theme": {
+      "type": "string",
+      "description": "Name of the color theme to load from ~/.config/falcode/themes/{name}.json. Defaults to \"default\".",
+      "default": "default"
+    },
+    "theme_scheme": {
+      "type": "string",
+      "description": "Color scheme variant to use: \"system\" auto-detects the OS dark/light mode, \"dark\" and \"light\" force a specific scheme.",
+      "enum": ["system", "dark", "light"],
+      "default": "system"
+    },
+    "hide_footer": {
+      "type": "boolean",
+      "description": "When true, the footer bar (prefix hint and version) is hidden.",
+      "default": false
+    },
+    "keybinds": {
+      "$ref": "#/$defs/keybindsConfig",
+      "description": "Key binding configuration. If omitted, the built-in defaults are used."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "tab": {
+      "type": "object",
+      "description": "A single inner tab.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name for the tab."
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to run in the tab (e.g. \"opencode\", \"lazygit\"). Omit to open an interactive shell."
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "keybindsConfig": {
+      "type": "object",
+      "description": "Top-level keybind configuration.",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "description": "The prefix key that enters prefix mode (unlocks falcode controls). Examples: \"ctrl+b\", \"ctrl+a\".",
+          "default": "ctrl+b"
+        },
+        "bindings": {
+          "type": "array",
+          "description": "Root-level key bindings.",
+          "items": {
+            "$ref": "#/$defs/keybind"
+          }
+        }
+      },
+      "required": ["prefix", "bindings"],
+      "additionalProperties": false
+    },
+    "keybind": {
+      "type": "object",
+      "description": "A single key binding. Either a leaf (action/actions) or a group (bindings) that opens a sub-layer.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Key to press. Single characters (\"n\", \"p\", \"x\") or modifier combos (\"ctrl+b\")."
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional short label shown in the which-key overlay instead of the raw key string."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description shown in the which-key overlay."
+        },
+        "action": {
+          "$ref": "#/$defs/actionName",
+          "description": "Single action to execute. Use this or \"actions\", not both."
+        },
+        "actions": {
+          "type": "array",
+          "description": "Ordered list of actions to execute. Use \"lock\" as the last entry to return to locked (normal) mode after execution. Without \"lock\", the user stays in the current layer.",
+          "items": {
+            "$ref": "#/$defs/actionName"
+          },
+          "minItems": 1
+        },
+        "params": {
+          "type": "object",
+          "description": "Optional parameters passed to the action (e.g. tab or workspace index for go_to_tab / go_to_workspace).",
+          "additionalProperties": true
+        },
+        "bindings": {
+          "type": "array",
+          "description": "Sub-bindings that form a nested layer. When set, this keybind is a group and action/actions are ignored.",
+          "items": {
+            "$ref": "#/$defs/keybind"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["key", "description"],
+      "additionalProperties": false
+    },
+    "actionName": {
+      "type": "string",
+      "description": "Name of a built-in action.",
+      "enum": [
+        "quit",
+        "next_tab",
+        "prev_tab",
+        "new_tab",
+        "close_tab",
+        "next_workspace",
+        "prev_workspace",
+        "delete_workspace",
+        "passthrough",
+        "go_to_tab",
+        "go_to_workspace",
+        "lock"
+      ]
+    }
+  }
+}

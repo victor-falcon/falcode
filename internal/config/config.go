@@ -33,10 +33,11 @@ func (t *Tab) IsInteractive() bool {
 
 // Config is the top-level application configuration.
 type Config struct {
-	Tabs        []*Tab `json:"tabs"`
-	Theme       string `json:"theme,omitempty"`
-	ThemeScheme string `json:"theme_scheme,omitempty"` // "system" | "dark" | "light"
-	HideFooter  bool   `json:"hide_footer"`
+	Tabs        []*Tab          `json:"tabs"`
+	Theme       string          `json:"theme,omitempty"`
+	ThemeScheme string          `json:"theme_scheme,omitempty"` // "system" | "dark" | "light"
+	HideFooter  bool            `json:"hide_footer"`
+	Keybinds    *KeybindsConfig `json:"keybinds,omitempty"`
 }
 
 // Load returns the Config using a 3-priority search:
@@ -73,6 +74,12 @@ func loadFile(path string) (*Config, error) {
 	}
 	if len(cfg.Tabs) == 0 {
 		return nil, os.ErrNotExist
+	}
+	// Fill keybind defaults for any fields not specified in the file.
+	if cfg.Keybinds == nil {
+		cfg.Keybinds = DefaultKeybinds()
+	} else if cfg.Keybinds.Prefix == "" {
+		cfg.Keybinds.Prefix = "ctrl+b"
 	}
 	return &cfg, nil
 }

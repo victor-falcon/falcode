@@ -10,5 +10,6 @@ func DefaultConfig() *Config {
 		},
 		Theme:       "default",
 		ThemeScheme: "system",
+		Keybinds:    DefaultKeybinds(),
 	}
 }
