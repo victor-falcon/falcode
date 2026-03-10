@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -229,6 +230,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	default:
+		// bubbletea wraps unrecognized escape sequences (e.g. Shift+Enter via
+		// the Kitty keyboard protocol: ESC [ 13 ; 2 u) as the unexported
+		// unknownCSISequenceMsg type, which is a named []byte slice. Forward
+		// these raw bytes to the active PTY so that the process running inside
+		// (e.g. opencode) can handle them correctly.
+		m.handleUnknownMsg(msg)
 	}
 
 	return m, nil
@@ -316,6 +325,32 @@ func (m *Model) View() string {
 // ============================================================
 // Key handling
 // ============================================================
+
+// handleUnknownMsg forwards unrecognized input byte sequences to the active
+// PTY. bubbletea reports sequences it cannot parse (e.g. Shift+Enter sent as
+// ESC [ 13 ; 2 u by Kitty-keyboard-protocol terminals) as the unexported
+// unknownCSISequenceMsg type, which is a named []byte slice. We use reflect to
+// extract the raw bytes and write them to the PTY so that the process running
+// inside (e.g. opencode) receives the full escape sequence and can act on it.
+func (m *Model) handleUnknownMsg(msg tea.Msg) {
+	// Modals consume all input; don't leak bytes to the PTY while they're open.
+	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+		return
+	}
+
+	v := reflect.ValueOf(msg)
+	if v.Kind() != reflect.Slice || v.Type().Elem().Kind() != reflect.Uint8 {
+		return
+	}
+	raw := v.Bytes()
+	if len(raw) == 0 {
+		return
+	}
+
+	if pane := m.activePane(); pane != nil && !pane.Exited() {
+		pane.Write(raw)
+	}
+}
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Workspace naming prompt intercepts all keys (highest priority).
