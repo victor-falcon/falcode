@@ -1197,10 +1197,10 @@ func (m *Model) startWSNamePrompt() {
 	m.namingWS = true
 	m.wsNamingStep = 0
 	m.wsPendingName = ""
-	m.wsNameInput.SetValue("")
-	m.wsNameInput.Focus()
 	m.wsBranchInput.SetValue("")
-	m.wsBranchInput.Blur()
+	m.wsBranchInput.Focus()
+	m.wsNameInput.SetValue("")
+	m.wsNameInput.Blur()
 }
 
 // handleWSNamingKey processes keys while the workspace naming prompt is active.
@@ -1214,27 +1214,27 @@ func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyEnter:
 		if m.wsNamingStep == 0 {
-			// Step 0 → capture workspace name, advance to branch step.
-			name := strings.TrimSpace(m.wsNameInput.Value())
-			if name == "" {
-				// No name entered; stay on step 0.
+			// Step 0 → capture branch name (mandatory), advance to worktree name step.
+			branch := strings.TrimSpace(m.wsBranchInput.Value())
+			if branch == "" {
+				// No branch entered; stay on step 0.
 				return m, nil
 			}
-			m.wsPendingName = name
+			m.wsPendingName = branch
 			m.wsNamingStep = 1
-			m.wsNameInput.Blur()
-			m.wsBranchInput.SetValue("")
-			m.wsBranchInput.Placeholder = name // hint: press Enter to reuse
-			m.wsBranchInput.Focus()
+			m.wsBranchInput.Blur()
+			m.wsNameInput.SetValue("")
+			m.wsNameInput.Placeholder = branch // hint: press Enter to reuse branch name
+			m.wsNameInput.Focus()
 			return m, nil
 		}
 
-		// Step 1 → branch name (empty = reuse workspace name).
-		branchName := strings.TrimSpace(m.wsBranchInput.Value())
-		if branchName == "" {
-			branchName = m.wsPendingName
+		// Step 1 → worktree name (empty = reuse branch name).
+		wsName := strings.TrimSpace(m.wsNameInput.Value())
+		if wsName == "" {
+			wsName = m.wsPendingName
 		}
-		wsName := m.wsPendingName
+		branchName := m.wsPendingName
 		m.namingWS = false
 		m.creatingWS = true
 		m.wsNameInput.Blur()
@@ -1245,9 +1245,9 @@ func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Forward keystrokes to the active input.
 	var cmd tea.Cmd
 	if m.wsNamingStep == 0 {
-		m.wsNameInput, cmd = m.wsNameInput.Update(msg)
-	} else {
 		m.wsBranchInput, cmd = m.wsBranchInput.Update(msg)
+	} else {
+		m.wsNameInput, cmd = m.wsNameInput.Update(msg)
 	}
 	return m, cmd
 }
@@ -1507,11 +1507,11 @@ func (m *Model) renderWSNamePrompt() string {
 	var titleStr string
 	var inputView string
 	if m.wsNamingStep == 0 {
-		titleStr = "New Workspace — Name"
-		inputView = m.wsNameInput.View()
-	} else {
 		titleStr = "New Workspace — Branch"
 		inputView = m.wsBranchInput.View()
+	} else {
+		titleStr = "New Workspace — Name"
+		inputView = m.wsNameInput.View()
 	}
 	title := st.SheetTitle.Render(titleStr)
 	sep := st.SheetSep.Render(strings.Repeat("─", 28))
