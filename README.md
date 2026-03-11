@@ -63,10 +63,13 @@ The default prefix key is `Ctrl+B` (tmux-style). Press the prefix to enter comma
 | `Ctrl+B` `Ctrl+B` | Send prefix key through to the active pane |
 | `Ctrl+B` `1`–`9` | Jump directly to workspace 1–9 |
 | `Ctrl+B` `a`–`z` | Jump directly to inner tab a–z |
+| **t — Tabs** | |
 | `Ctrl+B` `t` `l` | Next inner tab |
 | `Ctrl+B` `t` `h` | Previous inner tab |
 | `Ctrl+B` `t` `n` | New console tab |
+| `Ctrl+B` `t` `r` | Rename current tab |
 | `Ctrl+B` `t` `x` | Close current tab |
+| **w — Workspaces** | |
 | `Ctrl+B` `w` `l` | Next workspace |
 | `Ctrl+B` `w` `h` | Previous workspace |
 | `Ctrl+B` `w` `n` | Create new workspace |
@@ -155,6 +158,7 @@ Keybinds live under the `"keybinds"` key in `config.json`. The full structure:
           { "key": "l", "description": "Next tab",     "action": "next_tab" },
           { "key": "h", "description": "Prev tab",     "action": "prev_tab" },
           { "key": "n", "description": "New console",  "actions": ["new_tab", "lock"] },
+          { "key": "r", "description": "Rename tab",   "actions": ["rename_tab", "lock"] },
           { "key": "x", "description": "Close tab",    "actions": ["close_tab", "lock"] }
         ]
       },
@@ -172,7 +176,7 @@ Keybinds live under the `"keybinds"` key in `config.json`. The full structure:
 }
 ```
 
-Available action names: `quit`, `next_tab`, `prev_tab`, `new_tab`, `close_tab`, `next_workspace`, `prev_workspace`, `new_workspace`, `delete_workspace`, `passthrough`, `go_to_tab`, `go_to_workspace`, `lock`.
+Available action names: `quit`, `next_tab`, `prev_tab`, `new_tab`, `close_tab`, `rename_tab`, `next_workspace`, `prev_workspace`, `new_workspace`, `delete_workspace`, `passthrough`, `go_to_tab`, `go_to_workspace`, `lock`.
 
 The `lock` action exits command mode. Omit it from navigation bindings to stay in the sub-layer and press the key repeatedly.
 
