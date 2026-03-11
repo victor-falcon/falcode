@@ -222,6 +222,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.FocusMsg:
+		// The terminal regained focus (e.g. user switched back to this tab).
+		// Force a full repaint to flush bubbletea's stale line-diff cache,
+		// which otherwise causes duplicated or mispositioned content.
+		return m, tea.ClearScreen
+
 	case PaneOutputMsg:
 		// Output arrived; bubbletea will call View() to re-render.
 		return m, nil

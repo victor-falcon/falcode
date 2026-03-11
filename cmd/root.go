@@ -90,6 +90,10 @@ func run(_ *cobra.Command, _ []string) error {
 		tea.WithMouseAllMotion(),
 		// Don't intercept Ctrl+C so it can pass through to the active PTY.
 		tea.WithoutSignalHandler(),
+		// Request focus/blur events from the terminal so we can force a full
+		// repaint when the user switches back to this tab (prevents stale
+		// diff-cache causing duplicated or mispositioned content).
+		tea.WithReportFocus(),
 	)
 
 	// Give the model a reference to prog.Send so that background goroutines
