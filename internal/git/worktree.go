@@ -173,3 +173,15 @@ func HasUncommittedChanges(worktreePath string) bool {
 	}
 	return strings.TrimSpace(string(out)) != ""
 }
+
+// FindWorktreeScript walks scriptPaths (relative to worktreePath) and returns
+// the absolute path of the first existing file. Returns "" if none is found.
+func FindWorktreeScript(worktreePath string, scriptPaths []string) string {
+	for _, p := range scriptPaths {
+		full := filepath.Join(worktreePath, p)
+		if _, err := os.Stat(full); err == nil {
+			return full
+		}
+	}
+	return ""
+}

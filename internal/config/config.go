@@ -150,6 +150,20 @@ type Config struct {
 	Tabs     []*Tab          `json:"tabs"`
 	UI       *UIConfig       `json:"ui,omitempty"`
 	Keybinds *KeybindsConfig `json:"keybinds,omitempty"`
+	// WorktreeScripts is an ordered list of paths relative to the newly created
+	// worktree to search for a setup script. The first existing file is
+	// executed after a new worktree is created. Defaults to
+	// ["falcode.sh", "worktree.sh"].
+	WorktreeScripts []string `json:"worktree_scripts,omitempty"`
+}
+
+// GetWorktreeScripts returns the configured worktree script search paths.
+// Falls back to ["falcode.sh", "worktree.sh"] when the field is not set.
+func (c *Config) GetWorktreeScripts() []string {
+	if c != nil && len(c.WorktreeScripts) > 0 {
+		return c.WorktreeScripts
+	}
+	return []string{"falcode.sh", "worktree.sh"}
 }
 
 // Load returns the Config using a 3-priority search:

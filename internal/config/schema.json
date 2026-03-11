@@ -24,6 +24,12 @@
     "keybinds": {
       "$ref": "#/$defs/keybindsConfig",
       "description": "Key binding configuration. If omitted, the built-in defaults are used."
+    },
+    "worktree_scripts": {
+      "type": "array",
+      "description": "Ordered list of paths relative to the newly created worktree to search for a setup script. The first existing file is executed after the worktree is created. Defaults to [\"falcode.sh\", \"worktree.sh\"].",
+      "items": { "type": "string" },
+      "default": ["falcode.sh", "worktree.sh"]
     }
   },
   "additionalProperties": false,

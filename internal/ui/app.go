@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -37,6 +41,13 @@ type WorkspaceDirtyCheckMsg struct {
 	WS    int
 	Dirty bool
 }
+
+// WorkspaceScriptOutputMsg carries a single line of stdout/stderr from the
+// worktree setup script while it is running.
+type WorkspaceScriptOutputMsg struct{ Line string }
+
+// WorkspaceScriptDoneMsg is dispatched when the worktree setup script exits.
+type WorkspaceScriptDoneMsg struct{ Err error }
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -96,6 +107,16 @@ type Model struct {
 	confirmDeleteWS bool
 	wsDeleteDirty   bool
 	wsDeleteTarget  int // workspace index captured when delete was initiated
+
+	// Workspace creation loading state: true while git worktree add is running.
+	creatingWS bool
+
+	// Worktree setup script execution state.
+	runningScript bool
+	scriptDone    bool
+	scriptOutput  []string // ring-buffer of the last scriptOutputMax lines
+	scriptTitle   string   // base name of the script being run
+	scriptErr     error
 
 	// Status message displayed in the tab bar gap.
 	statusMsg     string
@@ -215,13 +236,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case WorkspaceCreatedMsg:
 		// Insert the new worktree at the end and switch to it.
+		m.creatingWS = false
 		m.worktrees = append(m.worktrees, msg.Worktree)
 		m.extraTabs = append(m.extraTabs, []string{})
 		m.closedCfgTabs = append(m.closedCfgTabs, make(map[int]bool))
-		return m, m.switchWorkspaceCmd(len(m.worktrees) - 1)
+		switchCmd := m.switchWorkspaceCmd(len(m.worktrees) - 1)
+
+		// Look for a setup script inside the newly created worktree.
+		scriptPath := git.FindWorktreeScript(msg.Worktree.Path, m.cfg.GetWorktreeScripts())
+		if scriptPath == "" {
+			return m, switchCmd
+		}
+		m.runningScript = true
+		m.scriptDone = false
+		m.scriptOutput = nil
+		m.scriptErr = nil
+		m.scriptTitle = filepath.Base(scriptPath)
+		return m, tea.Batch(switchCmd, m.runWorktreeScriptCmd(msg.Worktree.Path, scriptPath, m.repoRoot))
 
 	case WorkspaceCreateErrMsg:
+		m.creatingWS = false
 		m.setStatus(fmt.Sprintf("create workspace: %v", msg.Err))
+		return m, nil
+
+	case WorkspaceScriptOutputMsg:
+		const scriptOutputMax = 20
+		m.scriptOutput = append(m.scriptOutput, msg.Line)
+		if len(m.scriptOutput) > scriptOutputMax {
+			m.scriptOutput = m.scriptOutput[len(m.scriptOutput)-scriptOutputMax:]
+		}
+		return m, nil
+
+	case WorkspaceScriptDoneMsg:
+		m.scriptDone = true
+		m.scriptErr = msg.Err
 		return m, nil
 
 	case WorkspaceDirtyCheckMsg:
@@ -251,8 +299,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Backspace) keep working while modifier variants reach the active PTY.
 		return m.handleUnknownMsg(msg)
 	}
-
-	return m, nil
 }
 
 // View implements tea.Model.
@@ -324,6 +370,19 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
 	}
 
+	// Overlay a loading indicator while the git worktree is being created.
+	if m.creatingWS {
+		loading := m.renderWSCreatingModal()
+		paneContent = overlayCentered(paneContent, loading, m.width, m.paneHeight())
+	}
+
+	// Overlay the script output modal while the setup script runs (and after
+	// it finishes, until the user presses any key to dismiss).
+	if m.runningScript {
+		scriptModal := m.renderScriptOutputModal()
+		paneContent = overlayCentered(paneContent, scriptModal, m.width, m.paneHeight())
+	}
+
 	view := tabBar + "\n" + paneContent
 
 	// Footer: context hint (left) and build version (right).
@@ -376,7 +435,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -436,7 +495,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -460,7 +519,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -489,7 +548,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode {
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -500,6 +559,20 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While the worktree is being created, swallow all keys.
+	if m.creatingWS {
+		return m, nil
+	}
+
+	// While the setup script is running, swallow all keys. When the script is
+	// done, any key dismisses the output modal.
+	if m.runningScript {
+		if m.scriptDone {
+			m.runningScript = false
+		}
+		return m, nil
+	}
+
 	// Workspace naming prompt intercepts all keys (highest priority).
 	if m.namingWS {
 		return m.handleWSNamingKey(msg)
@@ -966,6 +1039,7 @@ func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		wsName := m.wsPendingName
 		m.namingWS = false
+		m.creatingWS = true
 		m.wsNameInput.Blur()
 		m.wsBranchInput.Blur()
 		return m, m.createWorkspaceCmd(wsName, branchName)
@@ -991,6 +1065,52 @@ func (m *Model) createWorkspaceCmd(worktreeName, branchName string) tea.Cmd {
 			return WorkspaceCreateErrMsg{Err: err}
 		}
 		return WorkspaceCreatedMsg{Worktree: wt}
+	}
+}
+
+// runWorktreeScriptCmd executes scriptPath (found inside worktreePath) as a
+// shell script with repoRoot passed as $1. stdout and stderr are merged and
+// streamed line-by-line via WorkspaceScriptOutputMsg. When the process exits,
+// WorkspaceScriptDoneMsg is dispatched.
+func (m *Model) runWorktreeScriptCmd(worktreePath, scriptPath, repoRoot string) tea.Cmd {
+	send := m.send
+	return func() tea.Msg {
+		sh := os.Getenv("SHELL")
+		if sh == "" {
+			sh = "/bin/sh"
+		}
+		cmd := exec.Command(sh, scriptPath, repoRoot)
+		cmd.Dir = worktreePath
+
+		// Use an io.Pipe to merge stdout and stderr into a single stream.
+		pr, pw := io.Pipe()
+		cmd.Stdout = pw
+		cmd.Stderr = pw
+
+		if err := cmd.Start(); err != nil {
+			pw.Close()
+			pr.Close()
+			return WorkspaceScriptDoneMsg{Err: fmt.Errorf("start script: %w", err)}
+		}
+
+		// Wait for the process in a goroutine so we can stream output
+		// concurrently. Close the pipe writer when done so the scanner sees EOF.
+		var waitErr error
+		waitDone := make(chan struct{})
+		go func() {
+			waitErr = cmd.Wait()
+			pw.Close()
+			close(waitDone)
+		}()
+
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			send(WorkspaceScriptOutputMsg{Line: scanner.Text()})
+		}
+		pr.Close()
+		<-waitDone
+
+		return WorkspaceScriptDoneMsg{Err: waitErr}
 	}
 }
 
@@ -1207,6 +1327,57 @@ func (m *Model) renderDeleteWSConfirm() string {
 
 	content := strings.Join(lines, "\n")
 	return st.SheetBox.Render(content)
+}
+
+// renderWSCreatingModal renders the loading overlay shown while the git
+// worktree is being created in the background.
+func (m *Model) renderWSCreatingModal() string {
+	st := m.styles
+	title := st.SheetTitle.Render("Creating Workspace")
+	sep := st.SheetSep.Render(strings.Repeat("─", 28))
+	body := st.SheetDesc.Render("Setting up git worktree…")
+	content := strings.Join([]string{title, sep, body}, "\n")
+	return st.SheetBox.Render(content)
+}
+
+// renderScriptOutputModal renders the setup script output overlay. It shows
+// the last scriptOutputMax lines streamed from the script's stdout/stderr,
+// plus a status line indicating whether the script is still running or has
+// finished. When done the user dismisses it with any key.
+func (m *Model) renderScriptOutputModal() string {
+	const innerWidth = 60
+
+	st := m.styles
+	title := st.SheetTitle.Render(fmt.Sprintf("Running %s", m.scriptTitle))
+	sep := st.SheetSep.Render(strings.Repeat("─", innerWidth))
+
+	var lines []string
+	lines = append(lines, title, sep)
+
+	for _, line := range m.scriptOutput {
+		// Truncate lines that exceed the inner width.
+		r := []rune(line)
+		if len(r) > innerWidth {
+			line = string(r[:innerWidth-1]) + "…"
+		}
+		lines = append(lines, st.SheetDesc.Render(line))
+	}
+
+	// Bottom separator + status line.
+	lines = append(lines, st.SheetSep.Render(strings.Repeat("─", innerWidth)))
+	var statusLine string
+	switch {
+	case !m.scriptDone:
+		statusLine = st.SheetDesc.Render("running…")
+	case m.scriptErr != nil:
+		errText := st.WarningMsg.Render(fmt.Sprintf("Error: %v", m.scriptErr))
+		statusLine = errText + st.SheetDesc.Render("  ·  press any key")
+	default:
+		statusLine = st.SheetDesc.Render("Done  ·  press any key to dismiss")
+	}
+	lines = append(lines, statusLine)
+
+	return st.SheetBox.Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) setStatus(msg string) {
