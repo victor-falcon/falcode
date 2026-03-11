@@ -325,6 +325,7 @@ func (m *Model) View() string {
 		m.prefixMode,
 		m.currentStatus(),
 		m.cfg.UI,
+		m.keybinds,
 		m.styles,
 	)
 

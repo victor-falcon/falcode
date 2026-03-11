@@ -45,6 +45,47 @@ type Keybind struct {
 // IsGroup returns true when this keybind opens a sub-layer.
 func (k *Keybind) IsGroup() bool { return len(k.Bindings) > 0 }
 
+// FindDirectKey searches binds recursively for a binding whose action list
+// contains action and whose Params["index"] equals index. It returns the Key
+// of the first matching binding, or "" when none is found.
+//
+// This is used by the tab-bar renderer to display the exact key the user
+// should press to jump to a given workspace or inner tab — so the label
+// automatically reflects whatever keybind configuration is active.
+func FindDirectKey(binds []*Keybind, action string, index int) string {
+	for _, b := range binds {
+		// Recurse into sub-layers first so nested bindings are reachable.
+		if b.IsGroup() {
+			if key := FindDirectKey(b.Bindings, action, index); key != "" {
+				return key
+			}
+			continue
+		}
+		// Check whether this leaf binding targets the requested action+index.
+		for _, a := range b.ActionList() {
+			if a != action {
+				continue
+			}
+			if idx, ok := b.Params["index"]; ok {
+				// Params values may be float64 (JSON-decoded) or int.
+				var iv int
+				switch v := idx.(type) {
+				case int:
+					iv = v
+				case float64:
+					iv = int(v)
+				default:
+					continue
+				}
+				if iv == index {
+					return b.Key
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // ActionList returns the effective list of actions to execute for this
 // keybind. If Actions is set it takes precedence; otherwise the singular
 // Action field is wrapped in a slice.

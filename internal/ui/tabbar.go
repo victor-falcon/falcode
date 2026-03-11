@@ -37,6 +37,32 @@ func NewTabBtnZoneID() string { return zoneNewTabBtn }
 // NewWorkspaceBtnZoneID returns the bubblezone ID for the + new-workspace button.
 func NewWorkspaceBtnZoneID() string { return zoneNewWorkspaceBtn }
 
+// workspaceLabel returns the key string to display next to workspace tab i
+// when show_workspace_numbers is enabled. It looks up the keybind that fires
+// go_to_workspace for that index; if none is found it falls back to the
+// 1-based position number (e.g. "10").
+func workspaceLabel(keybinds *config.KeybindsConfig, i int) string {
+	if keybinds != nil {
+		if key := config.FindDirectKey(keybinds.Bindings, config.ActionGoToWorkspace, i); key != "" {
+			return key
+		}
+	}
+	return fmt.Sprintf("%d", i+1)
+}
+
+// tabLabel returns the key string to display next to inner tab i when
+// show_tab_numbers is enabled. It looks up the keybind that fires go_to_tab
+// for that index; if none is found it falls back to the 1-based position
+// number (e.g. "10").
+func tabLabel(keybinds *config.KeybindsConfig, i int) string {
+	if keybinds != nil {
+		if key := config.FindDirectKey(keybinds.Bindings, config.ActionGoToTab, i); key != "" {
+			return key
+		}
+	}
+	return fmt.Sprintf("%d", i+1)
+}
+
 // TabBarHeight returns the number of rows the tab bar occupies.
 // In compact mode it is 1 (unified row); otherwise it is 2 (workspace + inner).
 func TabBarHeight(ui *config.UIConfig) int {
@@ -59,14 +85,15 @@ func RenderTabBar(
 	prefixMode bool,
 	statusMsg string,
 	ui *config.UIConfig,
+	keybinds *config.KeybindsConfig,
 	st uiStyles,
 ) string {
 	if ui.GetCompactTabs() {
 		return renderCompactRow(zm, worktrees, innerTabs, extraTabs, closedCfgTabs,
-			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, st)
+			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, keybinds, st)
 	}
-	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, st)
-	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, activeInner, totalWidth, ui, st)
+	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, keybinds, st)
+	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, activeInner, totalWidth, ui, keybinds, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
 
@@ -78,6 +105,7 @@ func renderWorkspaceRow(
 	prefixMode bool,
 	statusMsg string,
 	ui *config.UIConfig,
+	keybinds *config.KeybindsConfig,
 	st uiStyles,
 ) string {
 	closeMode := ui.GetCloseWorkspaceButton()
@@ -86,7 +114,7 @@ func renderWorkspaceRow(
 	for i, wt := range worktrees {
 		wsPrefix := ""
 		if ui.GetShowWorkspaceNumbers() {
-			wsPrefix = fmt.Sprintf("%d", i+1)
+			wsPrefix = workspaceLabel(keybinds, i)
 		}
 		wsName := wt.Name()
 		isActive := i == activeWS
@@ -172,6 +200,7 @@ func renderInnerRow(
 	closedCfgTabs map[int]bool, // which built-in tab indices are hidden this workspace
 	activeInner, totalWidth int,
 	ui *config.UIConfig,
+	keybinds *config.KeybindsConfig,
 	st uiStyles,
 ) string {
 	closeMode := ui.GetCloseTabButton()
@@ -249,7 +278,7 @@ func renderInnerRow(
 			(closeMode == config.CloseTabButtonFocus && isActive))
 		prefix := ""
 		if ui.GetShowTabNumbers() {
-			prefix = string(rune('a' + logicalIdx))
+			prefix = tabLabel(keybinds, logicalIdx)
 		}
 		renderTab(prefix, t.Name, canClose)
 	}
@@ -263,7 +292,7 @@ func renderInnerRow(
 			(closeMode == config.CloseTabButtonFocus && isActive)
 		prefix := ""
 		if ui.GetShowTabNumbers() {
-			prefix = string(rune('a' + logicalIdx))
+			prefix = tabLabel(keybinds, logicalIdx)
 		}
 		renderTab(prefix, name, showClose)
 	}
@@ -303,6 +332,7 @@ func renderCompactRow(
 	prefixMode bool,
 	statusMsg string,
 	ui *config.UIConfig,
+	keybinds *config.KeybindsConfig,
 	st uiStyles,
 ) string {
 	closeWSMode := ui.GetCloseWorkspaceButton()
@@ -314,7 +344,7 @@ func renderCompactRow(
 	renderWSTab := func(i int, wt *git.Worktree, isActive bool) string {
 		wsPrefix := ""
 		if ui.GetShowWorkspaceNumbers() {
-			wsPrefix = fmt.Sprintf("%d", i+1)
+			wsPrefix = workspaceLabel(keybinds, i)
 		}
 		wsName := wt.Name()
 		buildWSContent := func(tabStyle, numStyle lipgloss.Style, padRight bool) string {
@@ -442,7 +472,7 @@ func renderCompactRow(
 			(closeTabMode == config.CloseTabButtonFocus && isActive))
 		prefix := ""
 		if ui.GetShowTabNumbers() {
-			prefix = string(rune('a' + logicalIdx))
+			prefix = tabLabel(keybinds, logicalIdx)
 		}
 		appendInnerTab(prefix, t.Name, canClose)
 	}
@@ -455,7 +485,7 @@ func renderCompactRow(
 			(closeTabMode == config.CloseTabButtonFocus && isActive)
 		prefix := ""
 		if ui.GetShowTabNumbers() {
-			prefix = string(rune('a' + logicalIdx))
+			prefix = tabLabel(keybinds, logicalIdx)
 		}
 		appendInnerTab(prefix, name, showClose)
 	}
