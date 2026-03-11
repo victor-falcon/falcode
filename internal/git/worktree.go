@@ -82,10 +82,11 @@ func parsePorcelain(output string) ([]*Worktree, error) {
 	return worktrees, nil
 }
 
-// Remove runs `git worktree remove --force <path>` from repoRoot, then
-// deletes the local branch with `git branch -D <branch>`, and finally
-// removes the worktree folder (and its now-empty parent) from disk.
-func Remove(repoRoot, worktreePath, branch string) error {
+// RemoveRef runs `git worktree remove --force <path>` from repoRoot to
+// deregister the worktree from git, then deletes the local branch with
+// `git branch -D <branch>` (best-effort). It does NOT remove the directory
+// from disk — call RemoveFolder for that.
+func RemoveRef(repoRoot, worktreePath, branch string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -99,9 +100,15 @@ func Remove(repoRoot, worktreePath, branch string) error {
 		del.Run() //nolint:errcheck
 	}
 
-	// Ensure the worktree folder is fully removed from disk. git worktree
-	// remove --force may leave the directory behind if it contains untracked
-	// files that are not part of the index.
+	return nil
+}
+
+// RemoveFolder removes the worktree directory from disk and cleans up the
+// now-empty parent bucket directory created by Create. This is intentionally
+// separate from RemoveRef so callers can report progress between the two steps.
+func RemoveFolder(worktreePath string) {
+	// Ensure the worktree folder is fully removed. git worktree remove --force
+	// may leave it behind when it contains untracked files not in the index.
 	os.RemoveAll(worktreePath) //nolint:errcheck
 
 	// Remove the parent directory if it is now empty (the per-repo bucket
@@ -110,7 +117,14 @@ func Remove(repoRoot, worktreePath, branch string) error {
 	if entries, err := os.ReadDir(parent); err == nil && len(entries) == 0 {
 		os.Remove(parent) //nolint:errcheck
 	}
+}
 
+// Remove is a convenience wrapper that calls RemoveRef followed by RemoveFolder.
+func Remove(repoRoot, worktreePath, branch string) error {
+	if err := RemoveRef(repoRoot, worktreePath, branch); err != nil {
+		return err
+	}
+	RemoveFolder(worktreePath)
 	return nil
 }
 

@@ -42,6 +42,13 @@ type WorkspaceDirtyCheckMsg struct {
 	Dirty bool
 }
 
+// WorkspaceDeleteProgressMsg is dispatched as each deletion step completes.
+// Step 1 = git worktree ref removed, Step 2 = folder deleted, Step 3 = tab removed.
+type WorkspaceDeleteProgressMsg struct {
+	Step int
+	Err  error
+}
+
 // WorkspaceScriptOutputMsg carries a single line of stdout/stderr from the
 // worktree setup script while it is running.
 type WorkspaceScriptOutputMsg struct{ Line string }
@@ -107,6 +114,11 @@ type Model struct {
 	confirmDeleteWS bool
 	wsDeleteDirty   bool
 	wsDeleteTarget  int // workspace index captured when delete was initiated
+
+	// Workspace deletion progress state (shown after confirmation).
+	deletingWS   bool  // progress modal is visible
+	deleteWSStep int   // number of completed steps: 0=none, 1=ref removed, 2=folder deleted, 3=tab removed
+	deleteWSErr  error // error from a deletion step, if any
 
 	// Workspace creation loading state: true while git worktree add is running.
 	creatingWS bool
@@ -284,6 +296,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsDeleteTarget = msg.WS
 		return m, nil
 
+	case WorkspaceDeleteProgressMsg:
+		if msg.Err != nil {
+			m.deleteWSErr = msg.Err
+			return m, nil
+		}
+		m.deleteWSStep = msg.Step
+		switch msg.Step {
+		case 1:
+			return m, m.deleteWSFolderCmd()
+		case 2:
+			// Dispatch step 3 after a 100ms pause so the "Remove tab" step is
+			// visible in the modal before the workspace disappears.
+			return m, tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+				return WorkspaceDeleteProgressMsg{Step: 3}
+			})
+		case 3:
+			m.finalizeDeleteWorkspace(m.wsDeleteTarget)
+			m.deletingWS = false
+		}
+		return m, nil
+
 	case animTickMsg:
 		done := m.sheet.Tick()
 		if done {
@@ -377,6 +410,12 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
 	}
 
+	// Overlay the workspace deletion progress modal.
+	if m.deletingWS {
+		progress := m.renderDeleteWSProgressModal()
+		paneContent = overlayCentered(paneContent, progress, m.width, m.paneHeight())
+	}
+
 	// Overlay a loading indicator while the git worktree is being created.
 	if m.creatingWS {
 		loading := m.renderWSCreatingModal()
@@ -442,7 +481,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -502,7 +541,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -526,7 +565,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -555,7 +594,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -566,6 +605,16 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While deletion is in progress, swallow all keys. If a step failed, any
+	// key dismisses the error modal.
+	if m.deletingWS {
+		if m.deleteWSErr != nil {
+			m.deletingWS = false
+			m.deleteWSErr = nil
+		}
+		return m, nil
+	}
+
 	// While the worktree is being created, swallow all keys.
 	if m.creatingWS {
 		return m, nil
@@ -954,25 +1003,54 @@ func (m *Model) closeTab(idx int) {
 	}
 }
 
-// executeDeleteWorkspaceCmd tears down the workspace at wsIdx and schedules
-// the async git worktree remove. Guards (only workspace, main worktree) must
-// have been checked before calling this.
-func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
+// beginDeleteWorkspaceCmd stops all panes for the given workspace and fires
+// the first async deletion step (removing the git worktree ref). The tab
+// remains visible and the progress modal is shown while work proceeds.
+func (m *Model) beginDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
 	wt := m.worktrees[wsIdx]
 
-	// Stop and remove all panes for this workspace, collecting their done
-	// channels so we can wait for the processes to fully exit before removing
-	// the worktree directory.
-	var doneChans []chan struct{}
+	// Signal all panes for this workspace to stop. We do NOT wait for the
+	// child processes to fully exit — git worktree remove --force and
+	// os.RemoveAll are safe to run while processes still hold open file handles
+	// on macOS/Linux, and waiting could block indefinitely if a process ignores
+	// the PTY close signal.
 	for key, p := range m.panes {
 		if key.Workspace == wsIdx {
-			doneChans = append(doneChans, p.done)
 			p.Stop()
+		}
+	}
+
+	repoRoot := m.repoRoot
+	wtPath := wt.Path
+	branch := wt.Branch
+	return func() tea.Msg {
+		err := git.RemoveRef(repoRoot, wtPath, branch)
+		return WorkspaceDeleteProgressMsg{Step: 1, Err: err}
+	}
+}
+
+// deleteWSFolderCmd fires the second async deletion step: wiping the worktree
+// directory (and its now-empty parent) from disk.
+func (m *Model) deleteWSFolderCmd() tea.Cmd {
+	wtPath := m.worktrees[m.wsDeleteTarget].Path
+	return func() tea.Msg {
+		git.RemoveFolder(wtPath)
+		return WorkspaceDeleteProgressMsg{Step: 2}
+	}
+}
+
+// finalizeDeleteWorkspace removes the workspace at wsIdx from all model slices,
+// re-indexes pane keys for workspaces that shifted down, and adjusts the active
+// indices. Must be called from the Update loop (i.e. synchronously).
+func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
+	// Clean up any remaining stopped pane entries for the deleted workspace.
+	for key := range m.panes {
+		if key.Workspace == wsIdx {
 			delete(m.panes, key)
 		}
 	}
 
-	// Remove the worktree from our lists.
+	// Remove the workspace from all parallel slices.
 	m.worktrees = append(m.worktrees[:wsIdx], m.worktrees[wsIdx+1:]...)
 	m.extraTabs = append(m.extraTabs[:wsIdx], m.extraTabs[wsIdx+1:]...)
 	m.closedCfgTabs = append(m.closedCfgTabs[:wsIdx], m.closedCfgTabs[wsIdx+1:]...)
@@ -990,22 +1068,6 @@ func (m *Model) executeDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
 		newPanes[key] = p
 	}
 	m.panes = newPanes
-
-	repoRoot := m.repoRoot
-	wtPath := wt.Path
-	branch := wt.Branch
-	return func() tea.Msg {
-		// Wait for all pane processes to fully exit before removing the
-		// worktree directory; Stop() only closes the PTY but the child
-		// process may still be alive for a moment.
-		for _, ch := range doneChans {
-			<-ch
-		}
-		if err := git.Remove(repoRoot, wtPath, branch); err != nil {
-			return PaneExitMsg{Err: fmt.Errorf("git worktree remove: %w", err)}
-		}
-		return nil
-	}
 }
 
 // restartPane stops the exited pane, removes it from the registry, and
@@ -1177,7 +1239,10 @@ func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		wsIdx := m.wsDeleteTarget
 		m.confirmDeleteWS = false
-		return m, m.executeDeleteWorkspaceCmd(wsIdx)
+		m.deletingWS = true
+		m.deleteWSStep = 0
+		m.deleteWSErr = nil
+		return m, m.beginDeleteWorkspaceCmd(wsIdx)
 	case "n":
 		m.confirmDeleteWS = false
 		return m, nil
@@ -1390,6 +1455,58 @@ func (m *Model) renderWSCreatingModal() string {
 	body := st.SheetDesc.Render("Setting up git worktree…")
 	content := strings.Join([]string{title, sep, body}, "\n")
 	return st.SheetBox.Render(content)
+}
+
+// renderDeleteWSProgressModal renders the step-by-step deletion progress
+// overlay shown after the user confirms workspace deletion.
+func (m *Model) renderDeleteWSProgressModal() string {
+	const sepWidth = 30
+	st := m.styles
+
+	wsName := ""
+	if wsIdx := m.wsDeleteTarget; wsIdx >= 0 && wsIdx < len(m.worktrees) {
+		wsName = m.worktrees[wsIdx].Name()
+	}
+
+	title := st.SheetTitle.Render(fmt.Sprintf("Deleting '%s'", wsName))
+	sep := st.SheetSep.Render(strings.Repeat("─", sepWidth))
+
+	type stepDef struct {
+		label string
+	}
+	steps := []stepDef{
+		{"Remove git worktree"},
+		{"Delete folder"},
+		{"Remove tab"},
+	}
+
+	var lines []string
+	lines = append(lines, title, sep)
+
+	for i, s := range steps {
+		stepNum := i + 1
+		var indicator string
+		switch {
+		case m.deleteWSErr != nil && m.deleteWSStep == i:
+			// Error occurred at this step.
+			indicator = "!"
+		case stepNum <= m.deleteWSStep:
+			indicator = "✓"
+		case stepNum == m.deleteWSStep+1:
+			indicator = "…"
+		default:
+			indicator = " "
+		}
+		lines = append(lines, st.SheetDesc.Render(fmt.Sprintf("[%s] %s", indicator, s.label)))
+	}
+
+	if m.deleteWSErr != nil {
+		lines = append(lines, sep)
+		lines = append(lines, st.WarningMsg.Render(fmt.Sprintf("Error: %v", m.deleteWSErr)))
+		lines = append(lines, st.SheetDesc.Render("press any key to dismiss"))
+	}
+
+	return st.SheetBox.Render(strings.Join(lines, "\n"))
 }
 
 // renderScriptOutputModal renders the setup script output overlay. It shows
