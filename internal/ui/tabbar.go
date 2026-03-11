@@ -80,6 +80,7 @@ func RenderTabBar(
 	innerTabs []*config.Tab,
 	extraTabs []string, // dynamically added console tab labels
 	closedCfgTabs map[int]bool, // per-workspace hidden built-in tab indices
+	renamedCfgTabs map[int]string, // per-workspace name overrides for built-in tabs
 	activeWS, activeInner int,
 	totalWidth int,
 	prefixMode bool,
@@ -89,11 +90,11 @@ func RenderTabBar(
 	st uiStyles,
 ) string {
 	if ui.GetCompactTabs() {
-		return renderCompactRow(zm, worktrees, innerTabs, extraTabs, closedCfgTabs,
+		return renderCompactRow(zm, worktrees, innerTabs, extraTabs, closedCfgTabs, renamedCfgTabs,
 			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, keybinds, st)
 	}
 	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, keybinds, st)
-	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, activeInner, totalWidth, ui, keybinds, st)
+	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, renamedCfgTabs, activeInner, totalWidth, ui, keybinds, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
 
@@ -198,6 +199,7 @@ func renderInnerRow(
 	cfgTabs []*config.Tab,
 	extraTabs []string,
 	closedCfgTabs map[int]bool, // which built-in tab indices are hidden this workspace
+	renamedCfgTabs map[int]string, // per-workspace name overrides for built-in tabs
 	activeInner, totalWidth int,
 	ui *config.UIConfig,
 	keybinds *config.KeybindsConfig,
@@ -280,7 +282,13 @@ func renderInnerRow(
 		if ui.GetShowTabNumbers() {
 			prefix = tabLabel(keybinds, logicalIdx)
 		}
-		renderTab(prefix, t.Name, canClose)
+		name := t.Name
+		if renamedCfgTabs != nil {
+			if rn, ok := renamedCfgTabs[i]; ok {
+				name = rn
+			}
+		}
+		renderTab(prefix, name, canClose)
 	}
 
 	// Extra (dynamically created) tabs — always closeable when closeMode allows.
@@ -328,6 +336,7 @@ func renderCompactRow(
 	cfgTabs []*config.Tab,
 	extraTabs []string,
 	closedCfgTabs map[int]bool,
+	renamedCfgTabs map[int]string, // per-workspace name overrides for built-in tabs
 	activeWS, activeInner, totalWidth int,
 	prefixMode bool,
 	statusMsg string,
@@ -474,7 +483,13 @@ func renderCompactRow(
 		if ui.GetShowTabNumbers() {
 			prefix = tabLabel(keybinds, logicalIdx)
 		}
-		appendInnerTab(prefix, t.Name, canClose)
+		name := t.Name
+		if renamedCfgTabs != nil {
+			if rn, ok := renamedCfgTabs[i]; ok {
+				name = rn
+			}
+		}
+		appendInnerTab(prefix, name, canClose)
 	}
 
 	cfgCount := len(cfgTabs)

@@ -100,7 +100,12 @@ type Model struct {
 
 	// Tab name prompt state.
 	namingTab    bool
+	renamingTab  bool
 	tabNameInput textinput.Model
+
+	// renamedCfgTabs[ws][cfgTabIdx] stores per-workspace name overrides for
+	// built-in (config) tabs that have been renamed by the user.
+	renamedCfgTabs []map[int]string
 
 	// Workspace creation prompt state.
 	// Step 0: ask for workspace name; step 1: ask for branch name.
@@ -157,6 +162,11 @@ func New(
 		closedCfgTabs[i] = make(map[int]bool)
 	}
 
+	renamedCfgTabs := make([]map[int]string, len(worktrees))
+	for i := range renamedCfgTabs {
+		renamedCfgTabs[i] = make(map[int]string)
+	}
+
 	ti := textinput.New()
 	ti.Placeholder = "tab name"
 	ti.CharLimit = 32
@@ -169,25 +179,26 @@ func New(
 	wsBranch.CharLimit = 128
 
 	return &Model{
-		cfg:           cfg,
-		keybinds:      keybinds,
-		styles:        newStyles(theme),
-		zm:            zm,
-		worktrees:     worktrees,
-		repoRoot:      worktrees[0].Path,
-		cfgTabs:       cfg.Tabs,
-		extraTabs:     extraTabs,
-		closedCfgTabs: closedCfgTabs,
-		panes:         make(map[PaneKey]*Pane),
-		width:         cols,
-		height:        rows,
-		sheet:         NewSheet(),
-		tabNameInput:  ti,
-		wsNameInput:   wsName,
-		wsBranchInput: wsBranch,
-		currentLayer:  keybinds.Bindings,
-		layerTitle:    "falcode",
-		version:       version,
+		cfg:            cfg,
+		keybinds:       keybinds,
+		styles:         newStyles(theme),
+		zm:             zm,
+		worktrees:      worktrees,
+		repoRoot:       worktrees[0].Path,
+		cfgTabs:        cfg.Tabs,
+		extraTabs:      extraTabs,
+		closedCfgTabs:  closedCfgTabs,
+		renamedCfgTabs: renamedCfgTabs,
+		panes:          make(map[PaneKey]*Pane),
+		width:          cols,
+		height:         rows,
+		sheet:          NewSheet(),
+		tabNameInput:   ti,
+		wsNameInput:    wsName,
+		wsBranchInput:  wsBranch,
+		currentLayer:   keybinds.Bindings,
+		layerTitle:     "falcode",
+		version:        version,
 	}
 }
 
@@ -258,6 +269,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.worktrees = append(m.worktrees, msg.Worktree)
 		m.extraTabs = append(m.extraTabs, []string{})
 		m.closedCfgTabs = append(m.closedCfgTabs, make(map[int]bool))
+		m.renamedCfgTabs = append(m.renamedCfgTabs, make(map[int]string))
 		switchCmd := m.switchWorkspaceCmd(len(m.worktrees) - 1)
 
 		// Look for a setup script inside the newly created worktree.
@@ -352,6 +364,7 @@ func (m *Model) View() string {
 		m.cfgTabs,
 		m.extraTabs[m.activeWS],
 		m.closedCfgTabs[m.activeWS],
+		m.renamedCfgTabs[m.activeWS],
 		m.activeWS,
 		m.activeInner,
 		m.width,
@@ -392,9 +405,13 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, banner, m.width, m.paneHeight())
 	}
 
-	// Overlay the tab name prompt when the user is creating a new tab.
+	// Overlay the tab name prompt when the user is creating or renaming a tab.
 	if m.namingTab {
-		prompt := m.renderTabNamePrompt()
+		prompt := m.renderTabNamePrompt("New Tab Name")
+		paneContent = overlayCentered(paneContent, prompt, m.width, m.paneHeight())
+	}
+	if m.renamingTab {
+		prompt := m.renderTabNamePrompt("Rename Tab")
 		paneContent = overlayCentered(paneContent, prompt, m.width, m.paneHeight())
 	}
 
@@ -481,7 +498,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -541,7 +558,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -565,7 +582,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -594,7 +611,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -662,6 +679,27 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner})
 		case tea.KeyEsc:
 			m.namingTab = false
+			m.tabNameInput.Blur()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.tabNameInput, cmd = m.tabNameInput.Update(msg)
+		return m, cmd
+	}
+
+	// Tab rename prompt intercepts all keys.
+	if m.renamingTab {
+		switch msg.Type {
+		case tea.KeyEnter:
+			name := strings.TrimSpace(m.tabNameInput.Value())
+			m.renamingTab = false
+			m.tabNameInput.Blur()
+			if name != "" {
+				m.renameTab(m.activeWS, m.activeInner, name)
+			}
+			return m, nil
+		case tea.KeyEsc:
+			m.renamingTab = false
 			m.tabNameInput.Blur()
 			return m, nil
 		}
@@ -904,6 +942,15 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 				m.switchInnerTab(idx)
 				cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
 			}
+		case config.ActionRenameTab:
+			if !m.isCurrentTabRenameable() {
+				m.setStatus("cannot rename a tab with a command")
+			} else {
+				m.tabNameInput.SetValue(m.currentTabName(m.activeWS, m.activeInner))
+				m.tabNameInput.Focus()
+				m.renamingTab = true
+				m.exitPrefixMode()
+			}
 		}
 	}
 
@@ -954,6 +1001,49 @@ func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
 
 func (m *Model) switchInnerTab(idx int) {
 	m.activeInner = idx
+}
+
+// isCurrentTabRenameable reports whether the active tab can be renamed.
+// Config tabs with a command (non-interactive) cannot be renamed.
+func (m *Model) isCurrentTabRenameable() bool {
+	idx := m.activeInner
+	if idx < len(m.cfgTabs) {
+		return m.cfgTabs[idx].IsInteractive()
+	}
+	// Extra (dynamically added) tabs are always renameable.
+	return true
+}
+
+// currentTabName returns the effective display name for the tab at (ws, idx),
+// taking per-workspace rename overrides into account.
+func (m *Model) currentTabName(ws, idx int) string {
+	if idx < len(m.cfgTabs) {
+		if ws < len(m.renamedCfgTabs) {
+			if name, ok := m.renamedCfgTabs[ws][idx]; ok {
+				return name
+			}
+		}
+		return m.cfgTabs[idx].Name
+	}
+	extraIdx := idx - len(m.cfgTabs)
+	if ws < len(m.extraTabs) && extraIdx < len(m.extraTabs[ws]) {
+		return m.extraTabs[ws][extraIdx]
+	}
+	return ""
+}
+
+// renameTab updates the display name for the tab at (ws, idx).
+func (m *Model) renameTab(ws, idx int, name string) {
+	if idx < len(m.cfgTabs) {
+		if ws < len(m.renamedCfgTabs) {
+			m.renamedCfgTabs[ws][idx] = name
+		}
+		return
+	}
+	extraIdx := idx - len(m.cfgTabs)
+	if ws < len(m.extraTabs) && extraIdx < len(m.extraTabs[ws]) {
+		m.extraTabs[ws][extraIdx] = name
+	}
 }
 
 func (m *Model) addExtraTab(name string) {
@@ -1063,6 +1153,7 @@ func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
 	m.worktrees = append(m.worktrees[:wsIdx], m.worktrees[wsIdx+1:]...)
 	m.extraTabs = append(m.extraTabs[:wsIdx], m.extraTabs[wsIdx+1:]...)
 	m.closedCfgTabs = append(m.closedCfgTabs[:wsIdx], m.closedCfgTabs[wsIdx+1:]...)
+	m.renamedCfgTabs = append(m.renamedCfgTabs[:wsIdx], m.renamedCfgTabs[wsIdx+1:]...)
 	if m.activeWS >= len(m.worktrees) {
 		m.activeWS = len(m.worktrees) - 1
 	}
@@ -1402,12 +1493,12 @@ func (m *Model) paneColsForTab(tab *config.Tab) int {
 // Status helpers
 // ============================================================
 
-func (m *Model) renderTabNamePrompt() string {
+func (m *Model) renderTabNamePrompt(title string) string {
 	st := m.styles
-	title := st.SheetTitle.Render("New Tab Name")
+	titleStr := st.SheetTitle.Render(title)
 	sep := st.SheetSep.Render(strings.Repeat("─", 24))
 	input := m.tabNameInput.View()
-	content := strings.Join([]string{title, sep, input}, "\n")
+	content := strings.Join([]string{titleStr, sep, input}, "\n")
 	return st.SheetBox.Render(content)
 }
 

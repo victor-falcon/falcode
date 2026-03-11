@@ -14,6 +14,7 @@ const (
 	ActionPassthrough     = "passthrough"
 	ActionGoToTab         = "go_to_tab"
 	ActionGoToWorkspace   = "go_to_workspace"
+	ActionRenameTab       = "rename_tab"
 	// ActionLock exits prefix mode after the current action chain completes.
 	// Without it in the chain, the user stays in the current layer.
 	ActionLock = "lock"
@@ -177,6 +178,7 @@ func DefaultKeybinds() *KeybindsConfig {
 				{Key: "h", Description: "Previous tab", Action: ActionPrevTab},
 				{Key: "n", Description: "New console tab", Actions: []string{ActionNewTab, ActionLock}},
 				{Key: "x", Description: "Close tab", Actions: []string{ActionCloseTab, ActionLock}},
+				{Key: "r", Description: "Rename tab", Actions: []string{ActionRenameTab, ActionLock}},
 			},
 		},
 		{
