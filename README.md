@@ -105,6 +105,7 @@ This writes the built-in defaults to `~/.config/falcode/config.json` which you c
     { "name": "Git",   "command": "lazygit" },
     { "name": "Console" }
   ],
+  "worktree_scripts": ["falcode.sh", "worktree.sh"],
   "ui": {
     "theme": "default",
     "theme_scheme": "system",
@@ -125,6 +126,30 @@ This writes the built-in defaults to `~/.config/falcode/config.json` which you c
 ```
 
 Tabs with no `"command"` run an interactive `$SHELL`.
+
+### Worktree scripts
+
+`worktree_scripts` is an ordered list of relative paths that falcode searches for a setup script whenever a new workspace (worktree) is created.
+
+```json
+{ "worktree_scripts": ["falcode.sh", "worktree.sh"] }
+```
+
+**Default:** `["falcode.sh", "worktree.sh"]`
+
+When a new workspace is created, falcode looks for each path in sequence relative to the new worktree directory and executes the first one that exists. If none of the listed files are found, no script is run.
+
+The script runs with its working directory set to the new worktree root, so you can use relative paths freely. Use it to automate per-worktree setup — installing dependencies, running migrations, copying environment files, and so on.
+
+**Example** — place a `falcode.sh` in your repo root:
+
+```sh
+#!/bin/sh
+npm install
+cp .env.example .env.local
+```
+
+Because the default list checks `falcode.sh` before `worktree.sh`, you can use `falcode.sh` for project-specific setup that should only run inside falcode, while keeping `worktree.sh` for general setup scripts shared with other tools.
 
 ### UI options
 
