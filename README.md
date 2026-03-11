@@ -25,8 +25,7 @@ Each outer tab (workspace) maps to a git worktree discovered in the current repo
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew tap victor-falcon/falcode
-brew install falcode
+brew install victor-falcon/falcode/falcode
 ```
 
 ### go install
@@ -251,20 +250,6 @@ Each color token requires both `"dark"` and `"light"` values. Omitted tokens fal
 ### Share a theme
 
 Themes are self-contained JSON files — share them however you like (gist, repo, etc.). Users drop the file into `~/.config/falcode/themes/` and set `"theme": "<filename-without-extension>"` in their config.
-
-## Releasing a new version
-
-Releases are automated with [goreleaser](https://goreleaser.com). Make sure you have it installed (`brew install goreleaser`) and that your `GITHUB_TOKEN` has `repo` write access.
-
-```sh
-make release TAG=v1.2.3
-```
-
-This will:
-1. Create and push the git tag
-2. Build binaries for macOS (arm64, amd64) and Linux (amd64, arm64)
-3. Create a GitHub Release with archives and checksums
-4. Push the updated Homebrew formula to the tap repo
 
 ## Contributing
 
