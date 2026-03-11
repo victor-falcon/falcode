@@ -11,6 +11,12 @@ import (
 type Tab struct {
 	Name    string `json:"name"`
 	Command string `json:"command,omitempty"`
+	// AutoRun controls whether the command is started automatically when the
+	// tab is first visited. Defaults to true when omitted. Set to false to
+	// start the tab in a stopped state — showing the "press Enter to restart"
+	// banner — so the command only runs when the user explicitly presses Enter.
+	// Has no effect on interactive (shell) tabs.
+	AutoRun *bool `json:"auto_run,omitempty"`
 }
 
 // Shell returns the command to run for this tab.
@@ -29,6 +35,13 @@ func (t *Tab) Shell() string {
 // and should run an interactive shell directly.
 func (t *Tab) IsInteractive() bool {
 	return t.Command == ""
+}
+
+// ShouldAutoRun reports whether the tab's command should start automatically
+// when the tab is first visited. Returns true unless AutoRun is explicitly
+// set to false. Always returns true for interactive tabs.
+func (t *Tab) ShouldAutoRun() bool {
+	return t.AutoRun == nil || *t.AutoRun
 }
 
 // CloseTabButton controls when the × close button is shown on inner tabs.

@@ -111,6 +111,11 @@
         "command": {
           "type": "string",
           "description": "Command to run in the tab (e.g. \"opencode\", \"lazygit\"). Omit to open an interactive shell."
+        },
+        "auto_run": {
+          "type": "boolean",
+          "description": "When false, the command is not started automatically when the tab is first visited. The tab shows the \"press Enter to restart\" banner immediately, and the command only runs when the user explicitly presses Enter. Has no effect on interactive (shell) tabs. Defaults to true.",
+          "default": true
         }
       },
       "required": ["name"],

@@ -1172,12 +1172,27 @@ func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
 
 // restartPane stops the exited pane, removes it from the registry, and
 // launches a fresh instance of the same command.
+// auto_run is intentionally ignored here — restarting is always an explicit
+// user action (pressing Enter), so the command must always start.
 func (m *Model) restartPane(key PaneKey) (tea.Model, tea.Cmd) {
 	if p, ok := m.panes[key]; ok {
 		p.Stop()
 		delete(m.panes, key)
 	}
-	return m, m.ensurePaneCmd(key)
+	tab := m.tabForKey(key)
+	if tab == nil {
+		return m, nil
+	}
+	wt := m.worktrees[key.Workspace]
+	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
+	m.panes[key] = p
+	send := m.send
+	return m, func() tea.Msg {
+		if err := p.Start(send); err != nil {
+			return PaneExitMsg{Key: key, Err: err}
+		}
+		return nil
+	}
 }
 
 func (m *Model) passthroughPrefix() {
@@ -1410,6 +1425,12 @@ func (m *Model) ensurePaneCmd(key PaneKey) tea.Cmd {
 	wt := m.worktrees[key.Workspace]
 	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
 	m.panes[key] = p
+	// If auto_run is disabled, mark the pane as stopped immediately so the
+	// "press Enter to restart" banner is shown without running the command.
+	if !tab.IsInteractive() && !tab.ShouldAutoRun() {
+		p.MarkStopped()
+		return nil
+	}
 	send := m.send
 	return func() tea.Msg {
 		if err := p.Start(send); err != nil {
@@ -1434,6 +1455,11 @@ func (m *Model) ensurePaneStarted(key PaneKey) {
 	wt := m.worktrees[key.Workspace]
 	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
 	m.panes[key] = p
+	// If auto_run is disabled, mark the pane as stopped so the banner is shown.
+	if !tab.IsInteractive() && !tab.ShouldAutoRun() {
+		p.MarkStopped()
+		return
+	}
 	p.Start(m.send) //nolint:errcheck
 }
 

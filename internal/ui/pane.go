@@ -122,6 +122,17 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 	return nil
 }
 
+// MarkStopped puts the pane into a stopped state without running the process.
+// Used when auto_run is false — the pane appears as if it ran and exited,
+// so the "press Enter to restart" banner is shown immediately.
+func (p *Pane) MarkStopped() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.started = true
+	p.exited = true
+	close(p.done)
+}
+
 // Write forwards raw bytes to the PTY's stdin.
 func (p *Pane) Write(data []byte) {
 	p.mu.Lock()
