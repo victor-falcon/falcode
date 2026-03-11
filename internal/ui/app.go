@@ -598,7 +598,16 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
-			pane.Write(raw)
+			// Convert Ctrl+letter Kitty sequences to traditional control bytes
+			// so the child process receives the correct signal byte (e.g.
+			// Ctrl+C → 0x03 / SIGINT) instead of the raw Kitty CSI sequence
+			// which most programs do not understand.
+			ctrl := (modifier-1)&4 != 0
+			if ctrl && ((keycode >= 'a' && keycode <= 'z') || (keycode >= 'A' && keycode <= 'Z')) {
+				pane.Write([]byte{byte(keycode & 0x1f)})
+			} else {
+				pane.Write(raw)
+			}
 		}
 		return m, nil
 	}
