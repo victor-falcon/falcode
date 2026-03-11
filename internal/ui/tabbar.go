@@ -84,11 +84,32 @@ func renderWorkspaceRow(
 
 	var tabs []string
 	for i, wt := range worktrees {
-		label := wt.Name()
+		wsPrefix := ""
 		if ui.GetShowWorkspaceNumbers() {
-			label = fmt.Sprintf("%d %s", i+1, label)
+			wsPrefix = fmt.Sprintf("%d", i+1)
 		}
+		wsName := wt.Name()
 		isActive := i == activeWS
+
+		// buildWSContent assembles the visible label. When wsPrefix is non-empty
+		// the number is rendered with the dim num-style; the name uses the base tab
+		// style. padRight controls whether right padding is added (omitted when a
+		// close button follows immediately after).
+		buildWSContent := func(tabStyle, numStyle lipgloss.Style, padRight bool) string {
+			if wsPrefix == "" {
+				if padRight {
+					return tabStyle.Render(wsName)
+				}
+				return tabStyle.PaddingRight(0).Render(wsName)
+			}
+			numS := numStyle.PaddingLeft(1).PaddingRight(0)
+			nameS := tabStyle.PaddingLeft(0).PaddingRight(0)
+			if padRight {
+				nameS = nameS.PaddingRight(1)
+			}
+			return numS.Render(wsPrefix) + nameS.Render(" "+wsName)
+		}
+
 		// The × is only meaningful on deletable workspaces (non-main, not the last one).
 		canClose := !wt.IsMain && len(worktrees) > 1 &&
 			(closeMode == config.CloseWorkspaceButtonAll ||
@@ -97,19 +118,19 @@ func renderWorkspaceRow(
 		var tabStr string
 		if canClose {
 			if isActive {
-				namePart := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.PaddingRight(0).Render(label))
+				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
 				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
 				tabStr = namePart + closePart
 			} else {
-				namePart := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.PaddingRight(0).Render(label))
+				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
 				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceInactive.PaddingLeft(0).Render(" ×"))
 				tabStr = namePart + closePart
 			}
 		} else {
 			if isActive {
-				tabStr = zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.Render(label))
+				tabStr = zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, true))
 			} else {
-				tabStr = zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.Render(label))
+				tabStr = zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, true))
 			}
 		}
 		tabs = append(tabs, tabStr)
@@ -291,27 +312,42 @@ func renderCompactRow(
 
 	// renderWSTab builds a single workspace tab string (active or inactive).
 	renderWSTab := func(i int, wt *git.Worktree, isActive bool) string {
-		label := wt.Name()
+		wsPrefix := ""
 		if ui.GetShowWorkspaceNumbers() {
-			label = fmt.Sprintf("%d %s", i+1, label)
+			wsPrefix = fmt.Sprintf("%d", i+1)
+		}
+		wsName := wt.Name()
+		buildWSContent := func(tabStyle, numStyle lipgloss.Style, padRight bool) string {
+			if wsPrefix == "" {
+				if padRight {
+					return tabStyle.Render(wsName)
+				}
+				return tabStyle.PaddingRight(0).Render(wsName)
+			}
+			numS := numStyle.PaddingLeft(1).PaddingRight(0)
+			nameS := tabStyle.PaddingLeft(0).PaddingRight(0)
+			if padRight {
+				nameS = nameS.PaddingRight(1)
+			}
+			return numS.Render(wsPrefix) + nameS.Render(" "+wsName)
 		}
 		canClose := !wt.IsMain && len(worktrees) > 1 &&
 			(closeWSMode == config.CloseWorkspaceButtonAll ||
 				(closeWSMode == config.CloseWorkspaceButtonFocus && isActive))
 		if canClose {
 			if isActive {
-				name := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.PaddingRight(0).Render(label))
+				name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
 				close := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
 				return name + close
 			}
-			name := zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.PaddingRight(0).Render(label))
+			name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
 			close := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceInactive.PaddingLeft(0).Render(" ×"))
 			return name + close
 		}
 		if isActive {
-			return zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceActive.Render(label))
+			return zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, true))
 		}
-		return zm.Mark(WorkspaceTabZoneID(i), st.WorkspaceInactive.Render(label))
+		return zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, true))
 	}
 
 	var parts []string

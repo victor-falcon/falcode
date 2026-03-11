@@ -8,11 +8,13 @@ import (
 // uiStyles holds all pre-built lipgloss styles derived from the active theme.
 type uiStyles struct {
 	// Workspace tab bar (outer)
-	WorkspaceActive   lipgloss.Style
-	WorkspaceInactive lipgloss.Style
-	WorkspaceBarBg    lipgloss.Style
-	PrefixIndicator   lipgloss.Style
-	StatusMsg         lipgloss.Style
+	WorkspaceActive         lipgloss.Style
+	WorkspaceInactive       lipgloss.Style
+	WorkspaceTabNumActive   lipgloss.Style // dimmed number prefix on active workspace tabs
+	WorkspaceTabNumInactive lipgloss.Style // dimmed number prefix on inactive workspace tabs
+	WorkspaceBarBg          lipgloss.Style
+	PrefixIndicator         lipgloss.Style
+	StatusMsg               lipgloss.Style
 
 	// Inner tab bar
 	InnerActive         lipgloss.Style
@@ -74,6 +76,19 @@ func newStyles(t *config.ThemeColors) uiStyles {
 			Foreground(toColor(t.WorkspaceInactiveFg)).
 			Background(toColor(t.WorkspaceInactive)).
 			Padding(0, 1),
+
+		// Number prefix for workspace tabs — same background as the tab, foreground
+		// dimmed via Faint so it recedes behind the workspace name. No padding: the
+		// surrounding active/inactive styles handle the outer spacing.
+		WorkspaceTabNumActive: lipgloss.NewStyle().
+			Faint(true).
+			Foreground(toColor(t.WorkspaceActiveFg)).
+			Background(toColor(t.WorkspaceActive)),
+
+		WorkspaceTabNumInactive: lipgloss.NewStyle().
+			Faint(true).
+			Foreground(toColor(t.WorkspaceInactiveFg)).
+			Background(toColor(t.WorkspaceInactive)),
 
 		WorkspaceBarBg: lipgloss.NewStyle().
 			Background(toColor(t.WorkspaceBarBg)),
