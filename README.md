@@ -5,8 +5,8 @@ A terminal multiplexer for multi-agent git worktree workflows.
 Each outer tab (workspace) maps to a git worktree discovered in the current repository. Each workspace has inner tabs that run configurable tools — AI coding agent, lazygit, or an interactive shell — each in its own PTY. The workflow it enables: one worktree per feature branch, each with its own agent running in parallel.
 
 ```
-┌─[ main ]──[ feature/auth ]──[ feature/api ]─────────────────────────────┐
-│ [ Agent ]  [ Git ]  [ Console ]  [+]                                     │
+┌─[ 1 main ]──[ 2 feature/auth ]──[ 3 feature/api ]───────────────────────┐
+│ [ a Agent ]  [ b Git ]  [ c Console ]  [+]                               │
 │                                                                           │
 │  opencode running in this worktree's PTY                                 │
 │                                                                           │
@@ -61,6 +61,8 @@ The default prefix key is `Ctrl+B` (tmux-style). Press the prefix to enter comma
 |----------|--------|
 | `Ctrl+B` `q` | Quit |
 | `Ctrl+B` `Ctrl+B` | Send prefix key through to the active pane |
+| `Ctrl+B` `1`–`9` | Jump directly to workspace 1–9 |
+| `Ctrl+B` `a`–`z` | Jump directly to inner tab a–z |
 | `Ctrl+B` `t` `l` | Next inner tab |
 | `Ctrl+B` `t` `h` | Previous inner tab |
 | `Ctrl+B` `t` `n` | New console tab |
@@ -73,6 +75,8 @@ The default prefix key is `Ctrl+B` (tmux-style). Press the prefix to enter comma
 Press `Esc` at any point to cancel the current prefix sequence and return to normal mode.
 
 Navigation keys (`l` / `h`) keep you in the sub-layer so you can press them repeatedly without re-entering the prefix. Structural actions (`n` / `x`) automatically return to normal mode after executing.
+
+The numeric/letter prefix shown on each workspace and inner tab label corresponds to its direct-jump key — press `Ctrl+B` then that key to jump straight to it.
 
 ## Configuration
 
@@ -107,7 +111,9 @@ This writes the built-in defaults to `~/.config/falcode/config.json` which you c
     "new_workspace_button": true,
     "close_tab_button": "focus",
     "close_workspace_button": "none",
-    "compact_tabs": false
+    "compact_tabs": false,
+    "show_workspace_numbers": true,
+    "show_tab_numbers": true
   },
   "keybinds": {
     "prefix": "ctrl+b",
@@ -130,6 +136,8 @@ Tabs with no `"command"` run an interactive `$SHELL`.
 | `close_tab_button` | `"all"` `"focus"` `"none"` | `"focus"` | Show `[x]` close button on all tabs, only the focused one, or none |
 | `close_workspace_button` | `"all"` `"focus"` `"none"` | `"none"` | Show `[x]` close button on workspace tabs |
 | `compact_tabs` | bool | `false` | Merge the workspace bar and inner tab bar into a single row |
+| `show_workspace_numbers` | bool | `true` | Prefix each workspace label with its 1-based index (e.g. `1 main`), matching the default `1`–`9` direct-jump keybinds |
+| `show_tab_numbers` | bool | `true` | Prefix each inner tab label with its keybind letter (e.g. `a Agent`), matching the default `a`–`z` direct-jump keybinds |
 
 ### Keybinds
 
@@ -169,6 +177,32 @@ Available action names: `quit`, `next_tab`, `prev_tab`, `new_tab`, `close_tab`, 
 The `lock` action exits command mode. Omit it from navigation bindings to stay in the sub-layer and press the key repeatedly.
 
 Use `"action"` for a single action or `"actions"` to chain multiple actions.
+
+#### Direct jump bindings (`go_to_workspace` / `go_to_tab`)
+
+The `go_to_workspace` and `go_to_tab` actions accept a `"params"` object with an `"index"` field (0-based):
+
+```json
+{ "key": "1", "description": "Workspace 1", "action": "go_to_workspace", "params": { "index": 0 } }
+{ "key": "a", "description": "Tab a",        "action": "go_to_tab",        "params": { "index": 0 } }
+```
+
+These are included in the default keybinds as keys `1`–`9` (workspaces) and `a`–`z` (inner tabs). The tab-bar labels automatically reflect the key that will activate them — changing the binding key in your config will update the displayed prefix accordingly.
+
+#### Which-key overlay: `sheet_key` and `sheet_hide`
+
+When many bindings share a pattern (like `1`–`9`), you can collapse them into a single representative row in the which-key overlay:
+
+```json
+{ "key": "1", "description": "Go to workspace", "action": "go_to_workspace", "params": { "index": 0 }, "sheet_key": "1-9" },
+{ "key": "2", "description": "Go to workspace", "action": "go_to_workspace", "params": { "index": 1 }, "sheet_hide": true },
+...
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sheet_key` | string | Overrides the key label shown in the which-key overlay for this binding (e.g. `"1-9"`) |
+| `sheet_hide` | bool | When `true`, omits this binding from the which-key overlay entirely |
 
 ## Themes
 
