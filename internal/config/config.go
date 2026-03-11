@@ -75,11 +75,11 @@ type UIConfig struct {
 	CompactTabs *bool `json:"compact_tabs,omitempty"`
 	// ShowWorkspaceNumbers prefixes each workspace tab label with its 1-based
 	// index number (e.g. "1 main", "2 feature-x"). Matches the default 1-9
-	// go_to_workspace keybinds. Defaults to false.
+	// go_to_workspace keybinds. Defaults to true.
 	ShowWorkspaceNumbers *bool `json:"show_workspace_numbers,omitempty"`
 	// ShowTabNumbers prefixes each inner tab label with its keybind letter
 	// (e.g. "a editor", "b console"). Matches the default a-z go_to_tab
-	// keybinds. Defaults to false.
+	// keybinds. Defaults to true.
 	ShowTabNumbers *bool `json:"show_tab_numbers,omitempty"`
 }
 
@@ -155,19 +155,19 @@ func (u *UIConfig) GetCompactTabs() bool {
 
 // GetShowWorkspaceNumbers returns whether workspace tabs should display a
 // numeric prefix that matches the default 1-9 go_to_workspace keybinds.
-// Defaults to false when absent.
+// Defaults to true when absent.
 func (u *UIConfig) GetShowWorkspaceNumbers() bool {
 	if u == nil || u.ShowWorkspaceNumbers == nil {
-		return false
+		return true
 	}
 	return *u.ShowWorkspaceNumbers
 }
 
 // GetShowTabNumbers returns whether inner tabs should display a letter prefix
-// that matches the default a-z go_to_tab keybinds. Defaults to false when absent.
+// that matches the default a-z go_to_tab keybinds. Defaults to true when absent.
 func (u *UIConfig) GetShowTabNumbers() bool {
 	if u == nil || u.ShowTabNumbers == nil {
-		return false
+		return true
 	}
 	return *u.ShowTabNumbers
 }

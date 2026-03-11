@@ -83,13 +83,13 @@
         },
         "show_workspace_numbers": {
           "type": "boolean",
-          "description": "When true, each workspace tab label is prefixed with its 1-based index number (e.g. \"1 main\", \"2 feature-x\"). Matches the default 1-9 go_to_workspace keybinds. Defaults to false.",
-          "default": false
+          "description": "When true, each workspace tab label is prefixed with its 1-based index number (e.g. \"1 main\", \"2 feature-x\"). Matches the default 1-9 go_to_workspace keybinds. Defaults to true.",
+          "default": true
         },
         "show_tab_numbers": {
           "type": "boolean",
-          "description": "When true, each inner tab label is prefixed with its keybind letter (e.g. \"a editor\", \"b console\"). Matches the default a-z go_to_tab keybinds. Defaults to false.",
-          "default": false
+          "description": "When true, each inner tab label is prefixed with its keybind letter (e.g. \"a editor\", \"b console\"). Matches the default a-z go_to_tab keybinds. Defaults to true.",
+          "default": true
         }
       },
       "additionalProperties": false
