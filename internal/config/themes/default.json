@@ -1,5 +1,5 @@
 {
-  "$schema": "./schema.json",
+  "$schema": "https://raw.githubusercontent.com/victor-falcon/falcode/main/internal/config/themes/schema.json",
   "defs": {
     "purple":       "#7B61FF",
     "purple_light":  "#5B41DF",

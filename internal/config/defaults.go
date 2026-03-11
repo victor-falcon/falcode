@@ -1,5 +1,12 @@
 package config
 
+const (
+	// ConfigSchemaURL is the remote JSON Schema for config.json.
+	ConfigSchemaURL = "https://raw.githubusercontent.com/victor-falcon/falcode/main/internal/config/schema.json"
+	// ThemeSchemaURL is the remote JSON Schema for theme files.
+	ThemeSchemaURL = "https://raw.githubusercontent.com/victor-falcon/falcode/main/internal/config/themes/schema.json"
+)
+
 // DefaultUIConfig returns the built-in UI configuration defaults.
 func DefaultUIConfig() *UIConfig {
 	newTabBtn := true

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -40,9 +41,17 @@ func runWriteDefaultConfig(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling default config: %w", err)
 	}
-	data = append(data, '\n')
 
-	if err := os.WriteFile(dest, data, 0o644); err != nil {
+	// Inject "$schema" as the first key in the JSON object.
+	schemaLine := fmt.Appendf(nil, "  \"$schema\": %q,\n", config.ConfigSchemaURL)
+	idx := bytes.IndexByte(data, '\n') // right after the opening '{'
+	out := make([]byte, 0, len(data)+len(schemaLine)+1)
+	out = append(out, data[:idx+1]...)
+	out = append(out, schemaLine...)
+	out = append(out, data[idx+1:]...)
+	out = append(out, '\n')
+
+	if err := os.WriteFile(dest, out, 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", dest, err)
 	}
 
