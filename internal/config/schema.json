@@ -11,11 +11,17 @@
     },
     "tabs": {
       "type": "array",
-      "description": "Inner tabs shown inside every workspace. Tabs without a command run an interactive shell.",
+      "description": "Inner tabs shown inside every workspace. Tabs without a command run an interactive shell. When omitted, tabs are inherited from the global config or built-in defaults.",
       "items": {
         "$ref": "#/$defs/tab"
-      },
-      "minItems": 1
+      }
+    },
+    "appended_tabs": {
+      "type": "array",
+      "description": "Additional tabs appended after the resolved tabs list. Useful in a repo-level falcode.json to add project-specific tabs on top of globally configured ones.",
+      "items": {
+        "$ref": "#/$defs/tab"
+      }
     },
     "ui": {
       "$ref": "#/$defs/uiConfig",

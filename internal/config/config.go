@@ -174,9 +174,15 @@ func (u *UIConfig) GetShowTabNumbers() bool {
 
 // Config is the top-level application configuration.
 type Config struct {
-	Tabs     []*Tab          `json:"tabs"`
-	UI       *UIConfig       `json:"ui,omitempty"`
-	Keybinds *KeybindsConfig `json:"keybinds,omitempty"`
+	// Tabs are the inner tabs shown inside every workspace. When omitted, the
+	// next config level (global or built-in defaults) provides them.
+	Tabs []*Tab `json:"tabs,omitempty"`
+	// AppendedTabs are additional tabs appended after the resolved Tabs list.
+	// Useful in a repo-level falcode.json to add project-specific tabs on top
+	// of the globally configured ones.
+	AppendedTabs []*Tab          `json:"appended_tabs,omitempty"`
+	UI           *UIConfig       `json:"ui,omitempty"`
+	Keybinds     *KeybindsConfig `json:"keybinds,omitempty"`
 	// WorktreeScripts is an ordered list of paths relative to the newly created
 	// worktree to search for a setup script. The first existing file is
 	// executed after a new worktree is created. Defaults to
@@ -193,29 +199,92 @@ func (c *Config) GetWorktreeScripts() []string {
 	return []string{"falcode.sh", "worktree.sh"}
 }
 
-// Load returns the Config using a 3-priority search:
-//  1. <cwd>/falcode.json
-//  2. ~/.config/falcode/config.json
-//  3. Built-in defaults
+// Load reads and merges configs from two sources:
+//  1. ~/.config/falcode/config.json  (global)
+//  2. <cwd>/falcode.json             (repo-level, layered on top)
+//
+// Both files are optional. Missing files and files without tabs are valid —
+// missing tabs fall back to the next level, ultimately to DefaultConfig().
+//
+// Merge rules:
+//   - tabs:             repo wins if non-empty, otherwise global/default
+//   - appended_tabs:    always appended after the resolved tabs
+//   - ui:               field-by-field — repo non-zero values override global
+//   - keybinds:         repo wins if non-nil, otherwise global/default
+//   - worktree_scripts: repo wins if non-empty, otherwise global/default
 func Load(cwd string) (*Config, error) {
-	paths := []string{
-		filepath.Join(cwd, "falcode.json"),
-		filepath.Join(os.Getenv("HOME"), ".config", "falcode", "config.json"),
+	globalPath := filepath.Join(os.Getenv("HOME"), ".config", "falcode", "config.json")
+	repoPath := filepath.Join(cwd, "falcode.json")
+
+	globalCfg, err := loadFile(globalPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("reading config %s: %w", globalPath, err)
 	}
 
-	for _, p := range paths {
-		cfg, err := loadFile(p)
-		if err == nil {
-			return cfg, nil
-		}
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("reading config %s: %w", p, err)
-		}
+	repoCfg, err := loadFile(repoPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("reading config %s: %w", repoPath, err)
 	}
 
-	return DefaultConfig(), nil
+	// Determine the base: global config if available, otherwise built-in defaults.
+	base := globalCfg
+	if base == nil {
+		base = DefaultConfig()
+	}
+
+	// No repo config — use the base, ensuring keybind defaults are applied.
+	if repoCfg == nil {
+		if base.Keybinds == nil {
+			base.Keybinds = DefaultKeybinds()
+		} else if base.Keybinds.Prefix == "" {
+			base.Keybinds.Prefix = "ctrl+b"
+		}
+		return base, nil
+	}
+
+	// Merge repo config on top of base.
+	result := &Config{}
+
+	// tabs: repo wins when non-empty.
+	if len(repoCfg.Tabs) > 0 {
+		result.Tabs = repoCfg.Tabs
+	} else {
+		result.Tabs = base.Tabs
+	}
+
+	// appended_tabs: always appended after the resolved tabs.
+	result.Tabs = append(result.Tabs, repoCfg.AppendedTabs...)
+
+	// ui: field-by-field merge — repo non-zero values win.
+	result.UI = mergeUI(base.UI, repoCfg.UI)
+
+	// keybinds: repo wins when explicitly set.
+	if repoCfg.Keybinds != nil {
+		result.Keybinds = repoCfg.Keybinds
+	} else {
+		result.Keybinds = base.Keybinds
+	}
+
+	// worktree_scripts: repo wins when non-empty.
+	if len(repoCfg.WorktreeScripts) > 0 {
+		result.WorktreeScripts = repoCfg.WorktreeScripts
+	} else {
+		result.WorktreeScripts = base.WorktreeScripts
+	}
+
+	// Ensure keybind prefix default on the final resolved config.
+	if result.Keybinds == nil {
+		result.Keybinds = DefaultKeybinds()
+	} else if result.Keybinds.Prefix == "" {
+		result.Keybinds.Prefix = "ctrl+b"
+	}
+
+	return result, nil
 }
 
+// loadFile reads and parses a single config file. Returns os.ErrNotExist when
+// the file is absent. Any parseable file is valid regardless of whether it
+// defines tabs.
 func loadFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -225,14 +294,51 @@ func loadFile(path string) (*Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
-	if len(cfg.Tabs) == 0 {
-		return nil, os.ErrNotExist
-	}
-	// Fill keybind defaults for any fields not specified in the file.
-	if cfg.Keybinds == nil {
-		cfg.Keybinds = DefaultKeybinds()
-	} else if cfg.Keybinds.Prefix == "" {
-		cfg.Keybinds.Prefix = "ctrl+b"
-	}
 	return &cfg, nil
+}
+
+// mergeUI merges two UIConfig values field-by-field. Repo (override) non-zero
+// values take precedence over the base. Either argument may be nil.
+func mergeUI(base, override *UIConfig) *UIConfig {
+	// Start from a copy of the base (or an empty config if base is nil).
+	out := &UIConfig{}
+	if base != nil {
+		*out = *base
+	}
+	if override == nil {
+		return out
+	}
+
+	if override.Theme != "" {
+		out.Theme = override.Theme
+	}
+	if override.ThemeScheme != "" {
+		out.ThemeScheme = override.ThemeScheme
+	}
+	if override.HideFooter {
+		out.HideFooter = true
+	}
+	if override.NewTabButton != nil {
+		out.NewTabButton = override.NewTabButton
+	}
+	if override.NewWorkspaceButton != nil {
+		out.NewWorkspaceButton = override.NewWorkspaceButton
+	}
+	if override.CloseTabButton != "" {
+		out.CloseTabButton = override.CloseTabButton
+	}
+	if override.CloseWorkspaceButton != "" {
+		out.CloseWorkspaceButton = override.CloseWorkspaceButton
+	}
+	if override.CompactTabs != nil {
+		out.CompactTabs = override.CompactTabs
+	}
+	if override.ShowWorkspaceNumbers != nil {
+		out.ShowWorkspaceNumbers = override.ShowWorkspaceNumbers
+	}
+	if override.ShowTabNumbers != nil {
+		out.ShowTabNumbers = override.ShowTabNumbers
+	}
+
+	return out
 }

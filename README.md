@@ -75,11 +75,15 @@ The numeric/letter prefix shown on each workspace and inner tab label correspond
 
 ## Configuration
 
-falcode looks for configuration in this order:
+falcode reads **both** config files and merges them — the project-local file layers on top of the user-global one:
 
-1. `./falcode.json` — project-local (checked into the repo)
-2. `~/.config/falcode/config.json` — user-global
-3. Built-in defaults
+| Priority | Path | Purpose |
+|----------|------|---------|
+| 1 (top) | `<repo>/falcode.json` | Project-local overrides, checked into the repo |
+| 2 | `~/.config/falcode/config.json` | User-global settings |
+| 3 | Built-in defaults | Used when a field is absent from both files |
+
+Each field is resolved independently: a repo-level value overrides the global value, which overrides the built-in default. Neither file is required to define `tabs` — omitting them simply inherits from the next level.
 
 To bootstrap a user config file:
 
@@ -119,6 +123,38 @@ This writes the built-in defaults to `~/.config/falcode/config.json` which you c
 ```
 
 Tabs with no `"command"` run an interactive `$SHELL`.
+
+### Project-local config (`falcode.json`)
+
+Drop a `falcode.json` at the root of any repository to layer project-specific settings on top of your global config. Only the fields you specify are overridden — everything else keeps its global or default value.
+
+#### `appended_tabs`
+
+`appended_tabs` adds extra inner tabs after the tabs already resolved from the global config (or `tabs` if you also override those). This is the primary use case for a repo-level `falcode.json`: extend the standard tab set with tools specific to that project.
+
+```json
+{
+  "appended_tabs": [
+    { "name": "Tests", "command": "watchexec -e go -- go test ./..." },
+    { "name": "Logs" }
+  ]
+}
+```
+
+With the global config providing `Agent`, `Git`, and `Console`, the above produces four inner tabs: `Agent`, `Git`, `Console`, `Tests`, `Logs`.
+
+You can combine `appended_tabs` with other overrides in the same file:
+
+```json
+{
+  "appended_tabs": [
+    { "name": "Tests", "command": "watchexec -e go -- go test ./..." }
+  ],
+  "ui": {
+    "theme": "myproject"
+  }
+}
+```
 
 ### Worktree scripts
 
