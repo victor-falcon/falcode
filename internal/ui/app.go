@@ -836,10 +836,38 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 			cmds = append(cmds, m.deleteWorkspaceCmd(m.activeWS))
 		case config.ActionPassthrough:
 			m.passthroughPrefix()
+		case config.ActionGoToWorkspace:
+			if idx, ok := intParam(b.Params, "index"); ok {
+				cmds = append(cmds, m.switchWorkspaceCmd(idx))
+			}
+		case config.ActionGoToTab:
+			if idx, ok := intParam(b.Params, "index"); ok && m.isVisibleTab(idx) {
+				m.switchInnerTab(idx)
+				cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
+			}
 		}
 	}
 
 	return tea.Batch(cmds...)
+}
+
+// intParam extracts an integer from a Params map. JSON numbers unmarshal as
+// float64, so both int and float64 are handled.
+func intParam(params map[string]any, key string) (int, bool) {
+	if params == nil {
+		return 0, false
+	}
+	v, ok := params[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	}
+	return 0, false
 }
 
 func (m *Model) switchWorkspaceCmd(idx int) tea.Cmd {
@@ -1253,6 +1281,23 @@ func (m *Model) tabForKey(key PaneKey) *config.Tab {
 	}
 	// Dynamic console tab — no Command means interactive shell.
 	return &config.Tab{Name: m.extraTabs[key.Workspace][extraIdx]}
+}
+
+// isVisibleTab reports whether logical tab index idx exists and is currently
+// visible for the active workspace. It returns false for out-of-range indices
+// and for built-in tabs that have been closed in this workspace.
+func (m *Model) isVisibleTab(idx int) bool {
+	if idx < 0 {
+		return false
+	}
+	if idx < len(m.cfgTabs) {
+		return !m.closedCfgTabs[m.activeWS][idx]
+	}
+	extraIdx := idx - len(m.cfgTabs)
+	if m.activeWS >= len(m.extraTabs) {
+		return false
+	}
+	return extraIdx < len(m.extraTabs[m.activeWS])
 }
 
 func (m *Model) paneHeight() int {

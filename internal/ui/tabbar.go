@@ -85,6 +85,9 @@ func renderWorkspaceRow(
 	var tabs []string
 	for i, wt := range worktrees {
 		label := wt.Name()
+		if ui.GetShowWorkspaceNumbers() {
+			label = fmt.Sprintf("%d %s", i+1, label)
+		}
 		isActive := i == activeWS
 		// The × is only meaningful on deletable workspaces (non-main, not the last one).
 		canClose := !wt.IsMain && len(worktrees) > 1 &&
@@ -161,29 +164,50 @@ func renderInnerRow(
 
 	var parts []string
 
-	renderTab := func(label string, showClose bool) {
+	renderTab := func(prefix, name string, showClose bool) {
 		isActive := logicalIdx == activeInner
 		i := logicalIdx
+
+		// buildContent assembles the visible label. When prefix is non-empty the
+		// letter is rendered with the dim num-style; the name uses the base tab
+		// style. padRight controls whether right padding is added (omitted when a
+		// close button follows immediately after).
+		buildContent := func(tabStyle, numStyle lipgloss.Style, padRight bool) string {
+			if prefix == "" {
+				if padRight {
+					return tabStyle.Render(name)
+				}
+				return tabStyle.PaddingRight(0).Render(name)
+			}
+			numS := numStyle.PaddingLeft(1).PaddingRight(0)
+			nameS := tabStyle.PaddingLeft(0).PaddingRight(0)
+			if padRight {
+				nameS = nameS.PaddingRight(1)
+			}
+			return numS.Render(prefix) + nameS.Render(" "+name)
+		}
 
 		var tabPart string
 		if showClose {
 			if isActive {
-				namePart := zm.Mark(InnerTabZoneID(i), st.InnerActive.PaddingRight(0).Render(label))
+				content := buildContent(st.InnerActive, st.InnerTabNumActive, false)
+				namePart := zm.Mark(InnerTabZoneID(i), content)
 				closePart := zm.Mark(InnerTabCloseZoneID(i), st.InnerActive.Bold(false).PaddingLeft(0).Render(" ×"))
 				tabPart = namePart + closePart
 			} else {
-				namePart := zm.Mark(InnerTabZoneID(i), st.InnerInactive.PaddingRight(0).Render(label))
+				content := buildContent(st.InnerInactive, st.InnerTabNumInactive, false)
+				namePart := zm.Mark(InnerTabZoneID(i), content)
 				closePart := zm.Mark(InnerTabCloseZoneID(i), st.InnerInactive.PaddingLeft(0).Render(" ×"))
 				tabPart = namePart + closePart
 			}
 		} else {
-			var styled string
+			var content string
 			if isActive {
-				styled = st.InnerActive.Render(label)
+				content = buildContent(st.InnerActive, st.InnerTabNumActive, true)
 			} else {
-				styled = st.InnerInactive.Render(label)
+				content = buildContent(st.InnerInactive, st.InnerTabNumInactive, true)
 			}
-			tabPart = zm.Mark(InnerTabZoneID(i), styled)
+			tabPart = zm.Mark(InnerTabZoneID(i), content)
 		}
 
 		if !first {
@@ -202,17 +226,25 @@ func renderInnerRow(
 		isActive := logicalIdx == activeInner
 		canClose := t.IsInteractive() && (closeMode == config.CloseTabButtonAll ||
 			(closeMode == config.CloseTabButtonFocus && isActive))
-		renderTab(t.Name, canClose)
+		prefix := ""
+		if ui.GetShowTabNumbers() {
+			prefix = string(rune('a' + logicalIdx))
+		}
+		renderTab(prefix, t.Name, canClose)
 	}
 
 	// Extra (dynamically created) tabs — always closeable when closeMode allows.
 	cfgCount := len(cfgTabs)
-	for j, label := range extraTabs {
+	for j, name := range extraTabs {
 		logicalIdx = cfgCount + j
 		isActive := logicalIdx == activeInner
 		showClose := closeMode == config.CloseTabButtonAll ||
 			(closeMode == config.CloseTabButtonFocus && isActive)
-		renderTab(label, showClose)
+		prefix := ""
+		if ui.GetShowTabNumbers() {
+			prefix = string(rune('a' + logicalIdx))
+		}
+		renderTab(prefix, name, showClose)
 	}
 
 	// + new-tab button at the end.
@@ -260,6 +292,9 @@ func renderCompactRow(
 	// renderWSTab builds a single workspace tab string (active or inactive).
 	renderWSTab := func(i int, wt *git.Worktree, isActive bool) string {
 		label := wt.Name()
+		if ui.GetShowWorkspaceNumbers() {
+			label = fmt.Sprintf("%d %s", i+1, label)
+		}
 		canClose := !wt.IsMain && len(worktrees) > 1 &&
 			(closeWSMode == config.CloseWorkspaceButtonAll ||
 				(closeWSMode == config.CloseWorkspaceButtonFocus && isActive))
@@ -312,26 +347,43 @@ func renderCompactRow(
 	innerFirst := true
 	logicalIdx := 0
 
-	appendInnerTab := func(label string, showClose bool) {
+	appendInnerTab := func(prefix, name string, showClose bool) {
 		isActive := logicalIdx == activeInner
 		i := logicalIdx
+
+		buildContent := func(tabStyle, numStyle lipgloss.Style, padRight bool) string {
+			if prefix == "" {
+				if padRight {
+					return tabStyle.Render(name)
+				}
+				return tabStyle.PaddingRight(0).Render(name)
+			}
+			numS := numStyle.PaddingLeft(1).PaddingRight(0)
+			nameS := tabStyle.PaddingLeft(0).PaddingRight(0)
+			if padRight {
+				nameS = nameS.PaddingRight(1)
+			}
+			return numS.Render(prefix) + nameS.Render(" "+name)
+		}
 
 		var tabPart string
 		if showClose {
 			if isActive {
-				name := zm.Mark(InnerTabZoneID(i), st.InnerActive.PaddingRight(0).Render(label))
+				content := buildContent(st.InnerActive, st.InnerTabNumActive, false)
+				tabName := zm.Mark(InnerTabZoneID(i), content)
 				cl := zm.Mark(InnerTabCloseZoneID(i), st.InnerActive.Bold(false).PaddingLeft(0).Render(" ×"))
-				tabPart = name + cl
+				tabPart = tabName + cl
 			} else {
-				name := zm.Mark(InnerTabZoneID(i), st.InnerInactive.PaddingRight(0).Render(label))
+				content := buildContent(st.InnerInactive, st.InnerTabNumInactive, false)
+				tabName := zm.Mark(InnerTabZoneID(i), content)
 				cl := zm.Mark(InnerTabCloseZoneID(i), st.InnerInactive.PaddingLeft(0).Render(" ×"))
-				tabPart = name + cl
+				tabPart = tabName + cl
 			}
 		} else {
 			if isActive {
-				tabPart = zm.Mark(InnerTabZoneID(i), st.InnerActive.Render(label))
+				tabPart = zm.Mark(InnerTabZoneID(i), buildContent(st.InnerActive, st.InnerTabNumActive, true))
 			} else {
-				tabPart = zm.Mark(InnerTabZoneID(i), st.InnerInactive.Render(label))
+				tabPart = zm.Mark(InnerTabZoneID(i), buildContent(st.InnerInactive, st.InnerTabNumInactive, true))
 			}
 		}
 		// Separator before this inner tab: between inner tabs OR between the
@@ -352,16 +404,24 @@ func renderCompactRow(
 		isActive := logicalIdx == activeInner
 		canClose := t.IsInteractive() && (closeTabMode == config.CloseTabButtonAll ||
 			(closeTabMode == config.CloseTabButtonFocus && isActive))
-		appendInnerTab(t.Name, canClose)
+		prefix := ""
+		if ui.GetShowTabNumbers() {
+			prefix = string(rune('a' + logicalIdx))
+		}
+		appendInnerTab(prefix, t.Name, canClose)
 	}
 
 	cfgCount := len(cfgTabs)
-	for j, label := range extraTabs {
+	for j, name := range extraTabs {
 		logicalIdx = cfgCount + j
 		isActive := logicalIdx == activeInner
 		showClose := closeTabMode == config.CloseTabButtonAll ||
 			(closeTabMode == config.CloseTabButtonFocus && isActive)
-		appendInnerTab(label, showClose)
+		prefix := ""
+		if ui.GetShowTabNumbers() {
+			prefix = string(rune('a' + logicalIdx))
+		}
+		appendInnerTab(prefix, name, showClose)
 	}
 
 	// 4. + new-tab button (with a │ separator before it).

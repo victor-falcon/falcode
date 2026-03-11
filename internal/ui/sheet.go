@@ -72,11 +72,22 @@ func RenderSheet(bindings []*config.Keybind, title string, st uiStyles) string {
 		return ""
 	}
 
-	// Determine column widths.
+	// sheetLabel returns the key label to display in the sheet for b.
+	sheetLabel := func(b *config.Keybind) string {
+		if b.SheetKey != "" {
+			return b.SheetKey
+		}
+		return b.DisplayLabel()
+	}
+
+	// Determine column widths (skip hidden entries).
 	maxKeyW := 0
 	maxDescW := 0
 	for _, b := range bindings {
-		if w := len(b.DisplayLabel()); w > maxKeyW {
+		if b.SheetHide {
+			continue
+		}
+		if w := len(sheetLabel(b)); w > maxKeyW {
 			maxKeyW = w
 		}
 		desc := b.Description
@@ -99,7 +110,10 @@ func RenderSheet(bindings []*config.Keybind, title string, st uiStyles) string {
 	rows = append(rows, st.SheetSep.Render(strings.Repeat("─", sepW)))
 
 	for _, b := range bindings {
-		key := st.SheetKey.Render(padRight(b.DisplayLabel(), maxKeyW))
+		if b.SheetHide {
+			continue
+		}
+		key := st.SheetKey.Render(padRight(sheetLabel(b), maxKeyW))
 		var desc string
 		if b.IsGroup() {
 			desc = st.SheetGroup.Render(b.Description + "  +")

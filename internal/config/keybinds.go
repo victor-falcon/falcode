@@ -33,6 +33,13 @@ type Keybind struct {
 	Actions     []string       `json:"actions,omitempty"` // multi-action chain
 	Params      map[string]any `json:"params,omitempty"`
 	Bindings    []*Keybind     `json:"bindings,omitempty"`
+	// SheetKey overrides the key label shown in the which-key sheet.
+	// Useful for collapsing a range of bindings into one row (e.g. "1-9").
+	SheetKey string `json:"sheet_key,omitempty"`
+	// SheetHide removes this binding from the which-key sheet display.
+	// Use it for the non-representative entries in a range already summarised
+	// by another binding's SheetKey.
+	SheetHide bool `json:"sheet_hide,omitempty"`
 }
 
 // IsGroup returns true when this keybind opens a sub-layer.
@@ -71,40 +78,83 @@ type KeybindsConfig struct {
 // the "lock" action so the user stays in the current layer and can press the
 // key repeatedly. Structural/one-off actions include "lock" to return to the
 // locked (normal) state after execution.
+//
+// Direct go-to actions (go_to_workspace, go_to_tab) also omit "lock" by
+// default — add it explicitly in your config if you prefer to exit prefix
+// mode after jumping to a workspace or tab.
 func DefaultKeybinds() *KeybindsConfig {
-	return &KeybindsConfig{
-		Prefix: "ctrl+b",
-		Bindings: []*Keybind{
-			{
-				Key:         "ctrl+b",
-				Description: "Send ctrl+b to pane",
-				Actions:     []string{ActionPassthrough, ActionLock},
-			},
-			{
-				Key:         "q",
-				Description: "Quit",
-				Action:      ActionQuit,
-			},
-			{
-				Key:         "t",
-				Description: "Tab",
-				Bindings: []*Keybind{
-					{Key: "l", Description: "Next tab", Action: ActionNextTab},
-					{Key: "h", Description: "Previous tab", Action: ActionPrevTab},
-					{Key: "n", Description: "New console tab", Actions: []string{ActionNewTab, ActionLock}},
-					{Key: "x", Description: "Close tab", Actions: []string{ActionCloseTab, ActionLock}},
-				},
-			},
-			{
-				Key:         "w",
-				Description: "Workspace",
-				Bindings: []*Keybind{
-					{Key: "l", Description: "Next workspace", Action: ActionNextWorkspace},
-					{Key: "h", Description: "Previous workspace", Action: ActionPrevWorkspace},
-					{Key: "n", Description: "Create workspace", Actions: []string{ActionNewWorkspace, ActionLock}},
-					{Key: "x", Description: "Delete workspace", Actions: []string{ActionDeleteWorkspace, ActionLock}},
-				},
+	// Build workspace bindings: keys 1-9 → go_to_workspace index 0-8.
+	wsBindings := make([]*Keybind, 9)
+	for i := 0; i < 9; i++ {
+		b := &Keybind{
+			Key:         string(rune('1' + i)),
+			Description: "Go to workspace",
+			Action:      ActionGoToWorkspace,
+			Params:      map[string]any{"index": i},
+		}
+		if i == 0 {
+			b.SheetKey = "1-9"
+		} else {
+			b.SheetHide = true
+		}
+		wsBindings[i] = b
+	}
+
+	// Build tab bindings: keys a-z → go_to_tab index 0-25.
+	tabBindings := make([]*Keybind, 26)
+	for i := 0; i < 26; i++ {
+		b := &Keybind{
+			Key:         string(rune('a' + i)),
+			Description: "Go to tab",
+			Action:      ActionGoToTab,
+			Params:      map[string]any{"index": i},
+		}
+		if i == 0 {
+			b.SheetKey = "a-z"
+		} else {
+			b.SheetHide = true
+		}
+		tabBindings[i] = b
+	}
+
+	root := []*Keybind{
+		{
+			Key:         "ctrl+b",
+			Description: "Send ctrl+b to pane",
+			Actions:     []string{ActionPassthrough, ActionLock},
+		},
+		{
+			Key:         "q",
+			Description: "Quit",
+			Action:      ActionQuit,
+		},
+		{
+			Key:         "t",
+			Description: "Tab",
+			Bindings: []*Keybind{
+				{Key: "l", Description: "Next tab", Action: ActionNextTab},
+				{Key: "h", Description: "Previous tab", Action: ActionPrevTab},
+				{Key: "n", Description: "New console tab", Actions: []string{ActionNewTab, ActionLock}},
+				{Key: "x", Description: "Close tab", Actions: []string{ActionCloseTab, ActionLock}},
 			},
 		},
+		{
+			Key:         "w",
+			Description: "Workspace",
+			Bindings: []*Keybind{
+				{Key: "l", Description: "Next workspace", Action: ActionNextWorkspace},
+				{Key: "h", Description: "Previous workspace", Action: ActionPrevWorkspace},
+				{Key: "n", Description: "Create workspace", Actions: []string{ActionNewWorkspace, ActionLock}},
+				{Key: "x", Description: "Delete workspace", Actions: []string{ActionDeleteWorkspace, ActionLock}},
+			},
+		},
+	}
+
+	root = append(root, wsBindings...)
+	root = append(root, tabBindings...)
+
+	return &KeybindsConfig{
+		Prefix:   "ctrl+b",
+		Bindings: root,
 	}
 }

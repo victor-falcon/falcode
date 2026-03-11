@@ -73,6 +73,14 @@ type UIConfig struct {
 	// When true, inactive workspaces flank the active workspace's inner tabs in one line.
 	// Defaults to false.
 	CompactTabs *bool `json:"compact_tabs,omitempty"`
+	// ShowWorkspaceNumbers prefixes each workspace tab label with its 1-based
+	// index number (e.g. "1 main", "2 feature-x"). Matches the default 1-9
+	// go_to_workspace keybinds. Defaults to false.
+	ShowWorkspaceNumbers *bool `json:"show_workspace_numbers,omitempty"`
+	// ShowTabNumbers prefixes each inner tab label with its keybind letter
+	// (e.g. "a editor", "b console"). Matches the default a-z go_to_tab
+	// keybinds. Defaults to false.
+	ShowTabNumbers *bool `json:"show_tab_numbers,omitempty"`
 }
 
 // GetTheme returns the configured theme name, falling back to "default".
@@ -143,6 +151,25 @@ func (u *UIConfig) GetCompactTabs() bool {
 		return false
 	}
 	return *u.CompactTabs
+}
+
+// GetShowWorkspaceNumbers returns whether workspace tabs should display a
+// numeric prefix that matches the default 1-9 go_to_workspace keybinds.
+// Defaults to false when absent.
+func (u *UIConfig) GetShowWorkspaceNumbers() bool {
+	if u == nil || u.ShowWorkspaceNumbers == nil {
+		return false
+	}
+	return *u.ShowWorkspaceNumbers
+}
+
+// GetShowTabNumbers returns whether inner tabs should display a letter prefix
+// that matches the default a-z go_to_tab keybinds. Defaults to false when absent.
+func (u *UIConfig) GetShowTabNumbers() bool {
+	if u == nil || u.ShowTabNumbers == nil {
+		return false
+	}
+	return *u.ShowTabNumbers
 }
 
 // Config is the top-level application configuration.

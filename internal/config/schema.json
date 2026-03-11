@@ -80,6 +80,16 @@
           "type": "boolean",
           "description": "When true, the workspace row and inner tab row are merged into a single unified row. Inactive workspaces flank the active workspace's tabs. Defaults to false.",
           "default": false
+        },
+        "show_workspace_numbers": {
+          "type": "boolean",
+          "description": "When true, each workspace tab label is prefixed with its 1-based index number (e.g. \"1 main\", \"2 feature-x\"). Matches the default 1-9 go_to_workspace keybinds. Defaults to false.",
+          "default": false
+        },
+        "show_tab_numbers": {
+          "type": "boolean",
+          "description": "When true, each inner tab label is prefixed with its keybind letter (e.g. \"a editor\", \"b console\"). Matches the default a-z go_to_tab keybinds. Defaults to false.",
+          "default": false
         }
       },
       "additionalProperties": false
@@ -160,6 +170,15 @@
             "$ref": "#/$defs/keybind"
           },
           "minItems": 1
+        },
+        "sheet_key": {
+          "type": "string",
+          "description": "Overrides the key label shown in the which-key overlay. Useful for collapsing a range of bindings into one representative row (e.g. \"1-9\" or \"a-z\")."
+        },
+        "sheet_hide": {
+          "type": "boolean",
+          "description": "When true, this binding is omitted from the which-key overlay. Use it for the non-representative entries in a range already summarised by another binding's sheet_key.",
+          "default": false
         }
       },
       "required": ["key", "description"],
@@ -176,6 +195,7 @@
         "close_tab",
         "next_workspace",
         "prev_workspace",
+        "new_workspace",
         "delete_workspace",
         "passthrough",
         "go_to_tab",

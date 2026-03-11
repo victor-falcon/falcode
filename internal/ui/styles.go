@@ -15,10 +15,12 @@ type uiStyles struct {
 	StatusMsg         lipgloss.Style
 
 	// Inner tab bar
-	InnerActive    lipgloss.Style
-	InnerInactive  lipgloss.Style
-	InnerBarBg     lipgloss.Style
-	InnerSeparator lipgloss.Style
+	InnerActive         lipgloss.Style
+	InnerInactive       lipgloss.Style
+	InnerTabNumActive   lipgloss.Style // dimmed letter prefix on active inner tabs
+	InnerTabNumInactive lipgloss.Style // dimmed letter prefix on inactive inner tabs
+	InnerBarBg          lipgloss.Style
+	InnerSeparator      lipgloss.Style
 
 	// New-tab / new-workspace buttons
 	NewTabBtn       lipgloss.Style
@@ -95,6 +97,19 @@ func newStyles(t *config.ThemeColors) uiStyles {
 			Foreground(toColor(t.InnerInactiveFg)).
 			Background(toColor(t.InnerInactive)).
 			Padding(0, 1),
+
+		// Letter prefix for numbered tabs — same background as the tab, foreground
+		// dimmed via Faint so it recedes behind the tab name. No padding: the
+		// surrounding active/inactive styles handle the outer spacing.
+		InnerTabNumActive: lipgloss.NewStyle().
+			Faint(true).
+			Foreground(toColor(t.InnerActiveFg)).
+			Background(toColor(t.InnerActive)),
+
+		InnerTabNumInactive: lipgloss.NewStyle().
+			Faint(true).
+			Foreground(toColor(t.InnerInactiveFg)).
+			Background(toColor(t.InnerInactive)),
 
 		InnerBarBg: lipgloss.NewStyle().
 			Background(toColor(t.InnerBarBg)),
