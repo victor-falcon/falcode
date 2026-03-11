@@ -13,13 +13,6 @@ Each outer tab (workspace) maps to a git worktree discovered in the current repo
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Prerequisites
-
-- **Go 1.21+** — [install](https://go.dev/dl/)
-- **Git** — worktree discovery requires a git repository
-- **opencode** *(optional)* — used by the default Agent tab
-- **lazygit** *(optional)* — used by the default Git tab
-
 ## Installation
 
 ### Homebrew (macOS / Linux)
