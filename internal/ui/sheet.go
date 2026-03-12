@@ -226,9 +226,9 @@ func overlayBottomRight(baseStr, sheetStr string, totalWidth, sheetRowOffset int
 	return strings.Join(baseLines, "\n")
 }
 
-// overlayTopRight composites overlayStr over baseStr at the top-right corner.
-// totalWidth is the full width of the base content.
-func overlayTopRight(baseStr, overlayStr string, totalWidth int) string {
+// overlayTopRight composites overlayStr over baseStr anchored at the
+// top-right corner, starting at startRow (0 = very first line).
+func overlayTopRight(baseStr, overlayStr string, totalWidth, startRow int) string {
 	if overlayStr == "" {
 		return baseStr
 	}
@@ -250,10 +250,11 @@ func overlayTopRight(baseStr, overlayStr string, totalWidth int) string {
 	}
 
 	for i, overlayLine := range overlayLines {
-		if i >= len(baseLines) {
+		baseRow := startRow + i
+		if baseRow >= len(baseLines) {
 			break
 		}
-		base := baseLines[i]
+		base := baseLines[baseRow]
 
 		// Keep base content up to startCol.
 		left := xansi.Truncate(base, startCol, "")
@@ -261,7 +262,7 @@ func overlayTopRight(baseStr, overlayStr string, totalWidth int) string {
 			left += strings.Repeat(" ", startCol-leftW)
 		}
 
-		baseLines[i] = left + overlayLine
+		baseLines[baseRow] = left + overlayLine
 	}
 
 	return strings.Join(baseLines, "\n")

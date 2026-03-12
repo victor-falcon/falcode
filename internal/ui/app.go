@@ -490,11 +490,11 @@ func (m *Model) View() string {
 		view = overlayBottomRight(view, sheetStr, m.width, offset)
 	}
 
-	// Overlay the deletion toast at the top-right — applied last so it is
-	// always visible regardless of which workspace is active.
+	// Overlay the deletion toast just below the tab bar at the top-right,
+	// applied last so it stays visible regardless of which workspace is active.
 	if m.deletingWS {
 		toast := m.renderDeleteWSToast()
-		view = overlayTopRight(view, toast, m.width)
+		view = overlayTopRight(view, toast, m.width, TabBarHeight(m.cfg.UI)+1)
 	}
 
 	// Let bubblezone scan the output to record zone positions for mouse hits.
