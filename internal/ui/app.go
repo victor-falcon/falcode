@@ -249,7 +249,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tab := m.tabForKey(key)
 			p.Resize(m.paneColsForTab(tab), m.paneHeight())
 		}
-		return m, nil
+		// Force a full repaint to flush bubbletea's stale line-diff cache,
+		// which otherwise causes duplicated or mispositioned content after resize.
+		return m, tea.ClearScreen
 
 	case tea.FocusMsg:
 		// The terminal regained focus (e.g. user switched back to this tab).
