@@ -6,6 +6,14 @@ Each outer tab (workspace) maps to a git worktree discovered in the current repo
 
 ![falcode screenshot](assets/screenshot.png)
 
+---
+
+[![Whisper Money](https://camo.githubusercontent.com/8fa5c9e924302d1afd10bcc5c481bdc4eab396c6ba42a4f135d02210c939c417/68747470733a2f2f776869737065722e6d6f6e65792f696d616765732f6f675f776869737065725f6d6f6e65792e706e673f3230323630323135303735333436)](https://github.com/whisper-money/whisper-money)
+
+falcode is built to power the development of [Whisper Money](https://github.com/whisper-money/whisper-money) — a privacy-first, self-hosted personal finance app.
+
+---
+
 ## Installation
 
 ### Homebrew (macOS / Linux)
