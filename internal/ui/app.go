@@ -119,7 +119,8 @@ type Model struct {
 	// Workspace deletion confirmation state.
 	confirmDeleteWS bool
 	wsDeleteDirty   bool
-	wsDeleteTarget  int // workspace index captured when delete was initiated
+	wsCheckingDirty bool // true while git status is running before the modal can show the warning
+	wsDeleteTarget  int  // workspace index captured when delete was initiated
 
 	// Workspace deletion progress state (shown after confirmation).
 	deletingWS      bool          // deletion toast is visible
@@ -312,9 +313,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case WorkspaceDirtyCheckMsg:
-		m.confirmDeleteWS = true
-		m.wsDeleteDirty = msg.Dirty
-		m.wsDeleteTarget = msg.WS
+		m.wsCheckingDirty = false
+		// Only update the dirty warning if the modal is still open for the
+		// same workspace — the user may have already cancelled.
+		if m.confirmDeleteWS && m.wsDeleteTarget == msg.WS {
+			m.wsDeleteDirty = msg.Dirty
+		}
 		return m, nil
 
 	case WorkspaceDeleteProgressMsg:
@@ -1056,7 +1060,14 @@ func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
 		m.setStatus("cannot delete the main worktree")
 		return nil
 	}
-	return m.checkDirtyAndConfirmDeleteCmd(wsIdx)
+	// Show the confirmation modal immediately so the user gets instant
+	// feedback. The dirty check runs concurrently in the background and
+	// updates the already-visible modal once it completes.
+	m.wsDeleteTarget = wsIdx
+	m.wsDeleteDirty = false
+	m.wsCheckingDirty = true
+	m.confirmDeleteWS = true
+	return m.dirtyCheckCmd(wsIdx)
 }
 
 func (m *Model) switchInnerTab(idx int) {
@@ -1391,10 +1402,10 @@ func (m *Model) runWorktreeScriptCmd(worktreePath, scriptPath, repoRoot string) 
 // Workspace deletion confirmation
 // ============================================================
 
-// checkDirtyAndConfirmDeleteCmd runs git status for the target workspace in
-// the background, then dispatches WorkspaceDirtyCheckMsg so the UI can show
-// the confirmation dialog.
-func (m *Model) checkDirtyAndConfirmDeleteCmd(wsIdx int) tea.Cmd {
+// dirtyCheckCmd runs git status for the target workspace in the background and
+// dispatches WorkspaceDirtyCheckMsg so the already-visible confirmation dialog
+// can be updated with an "uncommitted changes" warning if needed.
+func (m *Model) dirtyCheckCmd(wsIdx int) tea.Cmd {
 	wtPath := m.worktrees[wsIdx].Path
 	return func() tea.Msg {
 		dirty := git.HasUncommittedChanges(wtPath)
@@ -1621,7 +1632,12 @@ func (m *Model) renderDeleteWSConfirm() string {
 	var lines []string
 	lines = append(lines, title, sep)
 
-	if m.wsDeleteDirty {
+	if m.wsCheckingDirty {
+		lines = append(lines,
+			st.SheetDesc.Render("Checking for uncommitted changes…"),
+			st.SheetDesc.Render(""),
+		)
+	} else if m.wsDeleteDirty {
 		lines = append(lines,
 			st.WarningMsg.Render("Uncommitted changes will be lost!"),
 			st.SheetDesc.Render(""),
