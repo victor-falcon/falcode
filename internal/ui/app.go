@@ -90,6 +90,10 @@ type Model struct {
 	// Build version shown in the footer.
 	version string
 
+	// Theme scheme tracking for runtime toggle ("dark" or "light").
+	scheme    string
+	themeName string
+
 	// Keybind / prefix mode state.
 	prefixMode   bool
 	layerStack   []layerState
@@ -153,6 +157,7 @@ func New(
 	worktrees []*git.Worktree,
 	cols, rows int,
 	version string,
+	scheme, themeName string,
 ) *Model {
 	zm := zone.New()
 	zm.SetEnabled(true)
@@ -204,6 +209,8 @@ func New(
 		currentLayer:    keybinds.Bindings,
 		layerTitle:      "falcode",
 		version:         version,
+		scheme:          scheme,
+		themeName:       themeName,
 		deleteWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		createWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 	}
@@ -1010,6 +1017,15 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 				m.tabNameInput.Focus()
 				m.renamingTab = true
 				m.exitPrefixMode()
+			}
+		case config.ActionToggleScheme:
+			if m.scheme == "dark" {
+				m.scheme = "light"
+			} else {
+				m.scheme = "dark"
+			}
+			if newTheme, err := config.LoadTheme(m.themeName, m.scheme); err == nil {
+				m.styles = newStyles(newTheme)
 			}
 		}
 	}

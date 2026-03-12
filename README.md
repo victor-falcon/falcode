@@ -66,6 +66,8 @@ The default prefix key is `Ctrl+B` (tmux-style). Press the prefix to enter comma
 | `Ctrl+B` `w` `h` | Previous workspace |
 | `Ctrl+B` `w` `n` | Create new workspace |
 | `Ctrl+B` `w` `x` | Delete current workspace |
+| **u — UI** | |
+| `Ctrl+B` `u` `a` | Toggle appearance (dark / light) |
 
 Press `Esc` at any point to cancel the current prefix sequence and return to normal mode.
 
@@ -223,13 +225,19 @@ Keybinds live under the `"keybinds"` key in `config.json`. The full structure:
           { "key": "n", "description": "New workspace",    "actions": ["new_workspace", "lock"] },
           { "key": "x", "description": "Delete workspace", "actions": ["delete_workspace", "lock"] }
         ]
+      },
+      {
+        "key": "u", "description": "UI",
+        "bindings": [
+          { "key": "a", "description": "Toggle appearance", "actions": ["toggle_scheme", "lock"] }
+        ]
       }
     ]
   }
 }
 ```
 
-Available action names: `quit`, `next_tab`, `prev_tab`, `new_tab`, `close_tab`, `rename_tab`, `next_workspace`, `prev_workspace`, `new_workspace`, `delete_workspace`, `passthrough`, `go_to_tab`, `go_to_workspace`, `lock`.
+Available action names: `quit`, `next_tab`, `prev_tab`, `new_tab`, `close_tab`, `rename_tab`, `next_workspace`, `prev_workspace`, `new_workspace`, `delete_workspace`, `passthrough`, `go_to_tab`, `go_to_workspace`, `toggle_scheme`, `lock`.
 
 The `lock` action exits command mode. Omit it from navigation bindings to stay in the sub-layer and press the key repeatedly.
 

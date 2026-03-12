@@ -82,7 +82,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	// --- Build model and program ---
-	model := ui.New(cfg, cfg.Keybinds, theme, worktrees, cols, rows, Version)
+	model := ui.New(cfg, cfg.Keybinds, theme, worktrees, cols, rows, Version, scheme, cfg.UI.GetTheme())
 
 	prog := tea.NewProgram(
 		model,

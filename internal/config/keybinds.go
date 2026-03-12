@@ -18,6 +18,8 @@ const (
 	// ActionLock exits prefix mode after the current action chain completes.
 	// Without it in the chain, the user stays in the current layer.
 	ActionLock = "lock"
+	// ActionToggleScheme switches the UI color scheme between dark and light.
+	ActionToggleScheme = "toggle_scheme"
 )
 
 // Keybind represents a single binding entry. It is either:
@@ -189,6 +191,13 @@ func DefaultKeybinds() *KeybindsConfig {
 				{Key: "h", Description: "Previous workspace", Action: ActionPrevWorkspace},
 				{Key: "n", Description: "Create workspace", Actions: []string{ActionNewWorkspace, ActionLock}},
 				{Key: "x", Description: "Delete workspace", Actions: []string{ActionDeleteWorkspace, ActionLock}},
+			},
+		},
+		{
+			Key:         "u",
+			Description: "UI",
+			Bindings: []*Keybind{
+				{Key: "a", Description: "Toggle appearance", Actions: []string{ActionToggleScheme, ActionLock}},
 			},
 		},
 	}
