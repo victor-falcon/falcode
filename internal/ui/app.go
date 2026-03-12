@@ -131,6 +131,9 @@ type Model struct {
 	wsCheckingDirty bool // true while git status is running before the modal can show the warning
 	wsDeleteTarget  int  // workspace index captured when delete was initiated
 
+	// Quit confirmation state.
+	confirmQuit bool
+
 	// Workspace deletion progress state (shown after confirmation).
 	deletingWS      bool          // deletion toast is visible
 	deleteWSStep    int           // number of completed steps: 0=none, 1=ref removed, 2=folder deleted, 3=tab removed
@@ -499,6 +502,12 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
 	}
 
+	// Overlay the quit confirmation dialog.
+	if m.confirmQuit {
+		dialog := m.renderQuitConfirm()
+		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
+	}
+
 	// Overlay a loading indicator while the git worktree is being created.
 	if m.creatingWS {
 		loading := m.renderWSCreatingModal()
@@ -571,7 +580,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -631,7 +640,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -655,7 +664,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -684,7 +693,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -708,6 +717,17 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.deletingWS && m.deleteWSErr != nil && msg.Type == tea.KeyEsc {
 		m.deletingWS = false
 		m.deleteWSErr = nil
+		return m, nil
+	}
+
+	// Quit confirmation modal intercepts all keys.
+	if m.confirmQuit {
+		switch strings.ToLower(string(msg.Runes)) {
+		case "y":
+			return m, tea.Quit
+		}
+		// Any other key (n, Esc, etc.) cancels the modal.
+		m.confirmQuit = false
 		return m, nil
 	}
 
@@ -1000,8 +1020,11 @@ func (m *Model) executeAction(b *config.Keybind) tea.Cmd {
 		case config.ActionLock:
 			m.exitPrefixMode()
 		case config.ActionQuit:
-			// Quit terminates the program immediately; no further actions run.
-			return tea.Quit
+			// Show a confirmation modal instead of quitting immediately, so an
+			// accidental Ctrl+B q does not close falcode without warning.
+			m.confirmQuit = true
+			m.exitPrefixMode()
+			return nil
 		case config.ActionNextTab:
 			m.switchInnerTab(m.wrapInner(m.activeInner + 1))
 			cmds = append(cmds, m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: m.activeInner}))
@@ -1688,6 +1711,15 @@ func (m *Model) renderDeleteWSConfirm() string {
 	lines = append(lines, st.SheetDesc.Render("[y] confirm   [n] / Esc cancel"))
 
 	content := strings.Join(lines, "\n")
+	return st.SheetBox.Render(content)
+}
+
+func (m *Model) renderQuitConfirm() string {
+	st := m.styles
+	title := st.SheetTitle.Render("Quit falcode?")
+	sep := st.SheetSep.Render(strings.Repeat("─", 28))
+	body := st.SheetDesc.Render("[y] confirm   [n] / Esc cancel")
+	content := strings.Join([]string{title, sep, body}, "\n")
 	return st.SheetBox.Render(content)
 }
 
