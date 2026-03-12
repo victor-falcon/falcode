@@ -55,6 +55,10 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// --- Auto-install the OpenCode falcode plugin ---
+	// This is a no-op when ~/.config/opencode/ does not exist.
+	ui.InstallOpenCodePlugin()
+
 	// Resolve the color scheme before loading the theme.
 	// "system" (and empty) means detect the OS appearance at boot time.
 	scheme := cfg.UI.GetThemeScheme()

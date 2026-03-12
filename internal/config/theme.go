@@ -49,6 +49,15 @@ type ThemeColors struct {
 	SheetDescription string `json:"sheet_description"`
 	SheetGroup       string `json:"sheet_group"`
 	SheetSeparator   string `json:"sheet_separator"`
+
+	// Footer bar
+	FooterBg string `json:"footer_bg"`
+
+	// Agent status icons shown in workspace tabs
+	AgentWorkingFg    string `json:"agent_working_fg"`
+	AgentPermissionFg string `json:"agent_permission_fg"`
+	AgentQuestionFg   string `json:"agent_question_fg"`
+	AgentDoneFg       string `json:"agent_done_fg"`
 }
 
 // ThemeColorPair holds a color for each color scheme.
@@ -87,7 +96,7 @@ func DefaultTheme(scheme string) *ThemeColors {
 			WorkspaceInactive:   "#F0F0F8",
 			WorkspaceActiveFg:   "#FFFFFF",
 			WorkspaceInactiveFg: "#666666",
-			WorkspaceBarBg:      "#E2E2F0",
+			WorkspaceBarBg:      "transparent",
 			WorkspaceBorder:     "#5B41DF",
 			PrefixIndicatorFg:   "#A07800",
 			StatusFg:            "#CC2222",
@@ -95,7 +104,7 @@ func DefaultTheme(scheme string) *ThemeColors {
 			InnerInactive:       "#F0F0F8",
 			InnerActiveFg:       "#FFFFFF",
 			InnerInactiveFg:     "#666666",
-			InnerBarBg:          "#ECECF8",
+			InnerBarBg:          "transparent",
 			InnerSeparator:      "#C8C8E8",
 			NewTabBtnBg:         "#F0F0F8",
 			NewTabBtnFg:         "#666666",
@@ -108,6 +117,11 @@ func DefaultTheme(scheme string) *ThemeColors {
 			SheetDescription:    "#444444",
 			SheetGroup:          "#A07800",
 			SheetSeparator:      "#C8C8E8",
+			FooterBg:            "transparent",
+			AgentWorkingFg:      "#00AA44",
+			AgentPermissionFg:   "#CC2222",
+			AgentQuestionFg:     "#C05800",
+			AgentDoneFg:         "#00AA44",
 		}
 	}
 	// dark (default)
@@ -116,7 +130,7 @@ func DefaultTheme(scheme string) *ThemeColors {
 		WorkspaceInactive:   "#1E1E2E",
 		WorkspaceActiveFg:   "#FFFFFF",
 		WorkspaceInactiveFg: "#888888",
-		WorkspaceBarBg:      "#13131F",
+		WorkspaceBarBg:      "transparent",
 		WorkspaceBorder:     "#7B61FF",
 		PrefixIndicatorFg:   "#FFD700",
 		StatusFg:            "#FF6B6B",
@@ -124,7 +138,7 @@ func DefaultTheme(scheme string) *ThemeColors {
 		InnerInactive:       "#1E1E2E",
 		InnerActiveFg:       "#FFFFFF",
 		InnerInactiveFg:     "#888888",
-		InnerBarBg:          "#0D0D1A",
+		InnerBarBg:          "transparent",
 		InnerSeparator:      "#333355",
 		NewTabBtnBg:         "#1E1E2E",
 		NewTabBtnFg:         "#888888",
@@ -137,6 +151,11 @@ func DefaultTheme(scheme string) *ThemeColors {
 		SheetDescription:    "#CCCCCC",
 		SheetGroup:          "#FFD700",
 		SheetSeparator:      "#333355",
+		FooterBg:            "transparent",
+		AgentWorkingFg:      "#5FFF87",
+		AgentPermissionFg:   "#FF5F5F",
+		AgentQuestionFg:     "#FF8C00",
+		AgentDoneFg:         "#5FFF87",
 	}
 }
 
@@ -249,5 +268,10 @@ func parseThemeFile(data []byte, scheme string) (*ThemeColors, error) {
 		SheetDescription:    fill(get("sheet_description"), def.SheetDescription),
 		SheetGroup:          fill(get("sheet_group"), def.SheetGroup),
 		SheetSeparator:      fill(get("sheet_separator"), def.SheetSeparator),
+		FooterBg:            fill(get("footer_bg"), def.FooterBg),
+		AgentWorkingFg:      fill(get("agent_working_fg"), def.AgentWorkingFg),
+		AgentPermissionFg:   fill(get("agent_permission_fg"), def.AgentPermissionFg),
+		AgentQuestionFg:     fill(get("agent_question_fg"), def.AgentQuestionFg),
+		AgentDoneFg:         fill(get("agent_done_fg"), def.AgentDoneFg),
 	}, nil
 }

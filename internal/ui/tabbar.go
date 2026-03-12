@@ -76,6 +76,8 @@ func TabBarHeight(ui *config.UIConfig) int {
 // produced; otherwise the classic two-row layout (workspace + inner) is used.
 // tabSpinners maps workspace index to a spinner character for any tab that
 // should show an animated spinner in place of its × close button.
+// wsAgentStatuses maps workspace index to the most urgent agent status for that
+// workspace. agentSpinnerView is the current frame of the agent spinner.
 func RenderTabBar(
 	zm *zone.Manager,
 	worktrees []*git.Worktree,
@@ -91,12 +93,15 @@ func RenderTabBar(
 	keybinds *config.KeybindsConfig,
 	st uiStyles,
 	tabSpinners map[int]string,
+	wsAgentStatuses map[int]AgentStatus,
+	agentSpinnerView string,
 ) string {
 	if ui.GetCompactTabs() {
 		return renderCompactRow(zm, worktrees, innerTabs, extraTabs, closedCfgTabs, renamedCfgTabs,
-			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, keybinds, st, tabSpinners)
+			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, keybinds, st, tabSpinners,
+			wsAgentStatuses, agentSpinnerView)
 	}
-	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, keybinds, st, tabSpinners)
+	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, keybinds, st, tabSpinners, wsAgentStatuses, agentSpinnerView)
 	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, renamedCfgTabs, activeInner, totalWidth, ui, keybinds, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
@@ -104,6 +109,8 @@ func RenderTabBar(
 // renderWorkspaceRow renders the top row of workspace (outer) tabs.
 // tabSpinners maps workspace index to a spinner character; matched tabs show
 // the spinner in place of their × close button.
+// wsAgentStatuses maps workspace index to the most urgent agent status for
+// that workspace. agentSpinnerView is the current spinner frame.
 func renderWorkspaceRow(
 	zm *zone.Manager,
 	worktrees []*git.Worktree,
@@ -114,6 +121,8 @@ func renderWorkspaceRow(
 	keybinds *config.KeybindsConfig,
 	st uiStyles,
 	tabSpinners map[int]string,
+	wsAgentStatuses map[int]AgentStatus,
+	agentSpinnerView string,
 ) string {
 	closeMode := ui.GetCloseWorkspaceButton()
 
@@ -145,6 +154,25 @@ func renderWorkspaceRow(
 			return numS.Render(wsPrefix) + nameS.Render(" "+wsName)
 		}
 
+		// agentIconStr returns the styled agent status icon for this workspace,
+		// or "" when the status is Idle (no icon shown).
+		agentIconStr := func(tabBg lipgloss.Style) string {
+			status := wsAgentStatuses[i]
+			bg := tabBg.GetBackground()
+			pad := tabBg.PaddingLeft(0).PaddingRight(0)
+			switch status {
+			case AgentStatusWorking:
+				return st.AgentWorking.Background(bg).PaddingLeft(1).PaddingRight(0).Render(agentSpinnerView)
+			case AgentStatusPermission:
+				return st.AgentPermission.Background(bg).PaddingLeft(1).PaddingRight(0).Render("!") + pad.Render(" ")
+			case AgentStatusQuestion:
+				return st.AgentQuestion.Background(bg).PaddingLeft(1).PaddingRight(0).Render("?") + pad.Render(" ")
+			case AgentStatusDone:
+				return st.AgentDone.Background(bg).PaddingLeft(1).PaddingRight(0).Render("✓") + pad.Render(" ")
+			}
+			return ""
+		}
+
 		// The × is only meaningful on deletable workspaces (non-main, not the last one).
 		canClose := !wt.IsMain && len(worktrees) > 1 &&
 			(closeMode == config.CloseWorkspaceButtonAll ||
@@ -156,28 +184,44 @@ func renderWorkspaceRow(
 			// The name part is still clickable (for workspace switching).
 			if isActive {
 				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
-				spinnerPart := st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" " + spinnerChar)
-				tabStr = namePart + spinnerPart
+				agentIcon := agentIconStr(st.WorkspaceActive)
+				spinnerPart := st.WorkspaceActive.Bold(false).PaddingLeft(0).PaddingRight(0).Render(" " + spinnerChar)
+				tabStr = namePart + agentIcon + spinnerPart
 			} else {
 				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
-				spinnerPart := st.WorkspaceInactive.PaddingLeft(0).Render(" " + spinnerChar)
-				tabStr = namePart + spinnerPart
+				agentIcon := agentIconStr(st.WorkspaceInactive)
+				spinnerPart := st.WorkspaceInactive.PaddingLeft(0).PaddingRight(0).Render(" " + spinnerChar)
+				tabStr = namePart + agentIcon + spinnerPart
 			}
 		} else if canClose {
 			if isActive {
 				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+				agentIcon := agentIconStr(st.WorkspaceActive)
 				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
-				tabStr = namePart + closePart
+				tabStr = namePart + agentIcon + closePart
 			} else {
 				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+				agentIcon := agentIconStr(st.WorkspaceInactive)
 				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceInactive.PaddingLeft(0).Render(" ×"))
-				tabStr = namePart + closePart
+				tabStr = namePart + agentIcon + closePart
 			}
 		} else {
 			if isActive {
-				tabStr = zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, true))
+				icon := agentIconStr(st.WorkspaceActive)
+				if icon != "" {
+					namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+					tabStr = namePart + icon
+				} else {
+					tabStr = zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, true))
+				}
 			} else {
-				tabStr = zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, true))
+				icon := agentIconStr(st.WorkspaceInactive)
+				if icon != "" {
+					namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+					tabStr = namePart + icon
+				} else {
+					tabStr = zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, true))
+				}
 			}
 		}
 		tabs = append(tabs, tabStr)
@@ -364,11 +408,36 @@ func renderCompactRow(
 	keybinds *config.KeybindsConfig,
 	st uiStyles,
 	tabSpinners map[int]string,
+	wsAgentStatuses map[int]AgentStatus,
+	agentSpinnerView string,
 ) string {
 	closeWSMode := ui.GetCloseWorkspaceButton()
 	closeTabMode := ui.GetCloseTabButton()
 	showNewTab := ui.GetNewTabButton()
 	showNewWS := ui.GetNewWorkspaceButton()
+
+	// agentIconStr returns the styled agent status icon for workspace i,
+	// rendered against the given tab background style.
+	agentIconStr := func(i int, tabBg lipgloss.Style) string {
+		status := wsAgentStatuses[i]
+		bg := tabBg.GetBackground()
+		pad := tabBg.PaddingLeft(0).PaddingRight(0)
+		switch status {
+		case AgentStatusWorking:
+			return pad.Render(" ") +
+				st.AgentWorking.Background(bg).Render(agentSpinnerView)
+		case AgentStatusPermission:
+			return pad.Render(" ") +
+				st.AgentPermission.Background(bg).Render("!") + pad.Render(" ")
+		case AgentStatusQuestion:
+			return pad.Render(" ") +
+				st.AgentQuestion.Background(bg).Render("?") + pad.Render(" ")
+		case AgentStatusDone:
+			return pad.Render(" ") +
+				st.AgentDone.Background(bg).Render("✓") + pad.Render(" ")
+		}
+		return ""
+	}
 
 	// renderWSTab builds a single workspace tab string (active or inactive).
 	renderWSTab := func(i int, wt *git.Worktree, isActive bool) string {
@@ -399,25 +468,39 @@ func renderCompactRow(
 			// Tab has an active spinner: show it in place of ×. Name still clickable.
 			if isActive {
 				name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+				icon := agentIconStr(i, st.WorkspaceActive)
 				sp := st.WorkspaceActive.Bold(false).PaddingLeft(0).PaddingRight(0).Render(" " + spinnerChar)
-				return name + sp
+				return name + icon + sp
 			}
 			name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+			icon := agentIconStr(i, st.WorkspaceInactive)
 			sp := st.WorkspaceInactive.PaddingLeft(0).PaddingRight(0).Render(" " + spinnerChar)
-			return name + sp
+			return name + icon + sp
 		}
 		if canClose {
 			if isActive {
 				name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+				icon := agentIconStr(i, st.WorkspaceActive)
 				close := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
-				return name + close
+				return name + icon + close
 			}
 			name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+			icon := agentIconStr(i, st.WorkspaceInactive)
 			close := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceInactive.PaddingLeft(0).Render(" ×"))
-			return name + close
+			return name + icon + close
 		}
 		if isActive {
+			icon := agentIconStr(i, st.WorkspaceActive)
+			if icon != "" {
+				name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+				return name + icon
+			}
 			return zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, true))
+		}
+		icon := agentIconStr(i, st.WorkspaceInactive)
+		if icon != "" {
+			name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+			return name + icon
 		}
 		return zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, true))
 	}

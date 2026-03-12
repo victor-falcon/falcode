@@ -28,9 +28,10 @@ type PaneExitMsg struct {
 
 // Pane manages a single PTY process and its VT100 terminal emulator.
 type Pane struct {
-	cfg *config.Tab
-	key PaneKey
-	dir string // working directory for the process
+	cfg            *config.Tab
+	key            PaneKey
+	dir            string // working directory for the process
+	statusPipePath string // FIFO path for agent status events (empty = none)
 
 	mu      sync.Mutex
 	ptmx    *os.File
@@ -63,6 +64,12 @@ func NewPane(key PaneKey, cfg *config.Tab, dir string, cols, rows int) *Pane {
 	}
 }
 
+// SetStatusPipe sets the FIFO path for agent status events. Must be called
+// before Start().
+func (p *Pane) SetStatusPipe(path string) {
+	p.statusPipePath = path
+}
+
 // Start launches the PTY process and begins streaming its output.
 // send is the bubbletea send function for dispatching messages.
 func (p *Pane) Start(send func(tea.Msg)) error {
@@ -91,6 +98,13 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 		cmd = newPtyCmd(sh, []string{"-c", p.cfg.Command}, p.dir)
 	}
 
+	// Inject the agent status pipe path so that tools like the OpenCode
+	// falcode plugin can report their status back, regardless of whether this
+	// is an interactive or command pane.
+	if p.statusPipePath != "" {
+		cmd.Cmd.Env = append(cmd.Cmd.Env, "FALCODE_STATUS_PIPE="+p.statusPipePath)
+	}
+
 	ptmx, err := pty.StartWithSize(cmd.Cmd, &pty.Winsize{
 		Rows: uint16(p.rows),
 		Cols: uint16(p.cols),
@@ -112,6 +126,12 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 			send(PaneOutputMsg{Key: p.key})
 		}
 	}()
+
+	// If a status pipe was configured, start a reader goroutine that will
+	// relay agent status events into the bubbletea event loop.
+	if p.statusPipePath != "" {
+		go readAgentPipe(p.statusPipePath, p.key, send)
+	}
 
 	// PTY read goroutine: reads raw bytes, feeds them into the VT emulator, then
 	// signals the sender goroutine via a non-blocking send into the size-1
@@ -187,13 +207,17 @@ func (p *Pane) Resize(cols, rows int) {
 	}
 }
 
-// Stop terminates the PTY process.
+// Stop terminates the PTY process and removes the agent status pipe if any.
 func (p *Pane) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ptmx != nil {
 		p.ptmx.Close()
 		p.ptmx = nil
+	}
+	if p.statusPipePath != "" {
+		removeAgentPipe(p.statusPipePath)
+		p.statusPipePath = ""
 	}
 }
 

@@ -21,14 +21,19 @@
     "muted_dark":    "#888888",
     "muted_light":   "#666666",
     "desc_dark":     "#CCCCCC",
-    "desc_light":    "#444444"
+    "desc_light":    "#444444",
+    "green":         "#5FFF87",
+    "green_light":   "#00AA44",
+    "orange":        "#FF8C00",
+    "orange_light":  "#C05800",
+    "agent_red":     "#FF5F5F"
   },
   "theme": {
     "workspace_active":      { "dark": "purple",         "light": "purple_light"  },
     "workspace_inactive":    { "dark": "dark_bg",        "light": "light_bg"      },
     "workspace_active_fg":   { "dark": "white",          "light": "white"         },
     "workspace_inactive_fg": { "dark": "muted_dark",     "light": "muted_light"   },
-    "workspace_bar_bg":      { "dark": "dark_bar",       "light": "light_bar"     },
+    "workspace_bar_bg":      { "dark": "transparent",    "light": "transparent"   },
     "workspace_border":      { "dark": "purple",         "light": "purple_light"  },
     "prefix_indicator_fg":   { "dark": "gold",           "light": "gold_light"    },
     "status_fg":             { "dark": "red",            "light": "red_light"     },
@@ -36,7 +41,7 @@
     "inner_inactive":        { "dark": "dark_bg",        "light": "light_bg"      },
     "inner_active_fg":       { "dark": "white",          "light": "white"         },
     "inner_inactive_fg":     { "dark": "muted_dark",     "light": "muted_light"   },
-    "inner_bar_bg":          { "dark": "dark_inner_bg",  "light": "light_inner_bg"},
+    "inner_bar_bg":          { "dark": "transparent",    "light": "transparent"   },
     "inner_separator":       { "dark": "dark_sep",       "light": "light_sep"     },
     "new_tab_btn_bg":        { "dark": "dark_bg",        "light": "light_bg"      },
     "new_tab_btn_fg":        { "dark": "muted_dark",     "light": "muted_light"   },
@@ -48,6 +53,11 @@
     "sheet_key":             { "dark": "purple",         "light": "purple_light"  },
     "sheet_description":     { "dark": "desc_dark",      "light": "desc_light"    },
     "sheet_group":           { "dark": "gold",           "light": "gold_light"    },
-    "sheet_separator":       { "dark": "dark_sep",       "light": "light_sep"     }
+    "sheet_separator":       { "dark": "dark_sep",       "light": "light_sep"     },
+    "footer_bg":             { "dark": "transparent",    "light": "transparent"   },
+    "agent_working_fg":      { "dark": "green",          "light": "green_light"   },
+    "agent_permission_fg":   { "dark": "agent_red",      "light": "red_light"     },
+    "agent_question_fg":     { "dark": "orange",         "light": "orange_light"  },
+    "agent_done_fg":         { "dark": "green",          "light": "green_light"   }
   }
 }

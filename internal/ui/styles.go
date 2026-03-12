@@ -47,6 +47,16 @@ type uiStyles struct {
 	FooterText lipgloss.Style
 	FooterKey  lipgloss.Style
 
+	// Agent status icons shown in workspace tabs.
+	// AgentWorking    — animated spinner while the agent is processing.
+	// AgentPermission — "!" when the agent is awaiting a permission grant.
+	// AgentQuestion   — "?" when the agent finished its turn and is waiting for the user.
+	// AgentDone       — "✓" briefly shown when the process exits.
+	AgentWorking    lipgloss.Style
+	AgentPermission lipgloss.Style
+	AgentQuestion   lipgloss.Style
+	AgentDone       lipgloss.Style
+
 	// Raw colour for compositing — may be lipgloss.NoColor{} when transparent.
 	SheetBgColor lipgloss.TerminalColor
 }
@@ -186,16 +196,33 @@ func newStyles(t *config.ThemeColors) uiStyles {
 			Background(sheetBg),
 
 		FooterBg: lipgloss.NewStyle().
-			Background(toColor(t.InnerBarBg)),
+			Background(toColor(t.FooterBg)),
 
 		FooterText: lipgloss.NewStyle().
 			Foreground(toColor(t.InnerInactiveFg)).
-			Background(toColor(t.InnerBarBg)),
+			Background(toColor(t.FooterBg)),
 
 		FooterKey: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(toColor(t.SheetKey)).
-			Background(toColor(t.InnerBarBg)),
+			Background(toColor(t.FooterBg)),
+
+		// Agent status icon styles. These are rendered inside the workspace tab
+		// (active or inactive background) so they inherit no explicit background
+		// — the tab rendering code applies the correct tab background style.
+		AgentWorking: lipgloss.NewStyle().
+			Foreground(toColor(t.AgentWorkingFg)),
+
+		AgentPermission: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(toColor(t.AgentPermissionFg)),
+
+		AgentQuestion: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(toColor(t.AgentQuestionFg)),
+
+		AgentDone: lipgloss.NewStyle().
+			Foreground(toColor(t.AgentDoneFg)),
 
 		SheetBgColor: sheetBg,
 	}

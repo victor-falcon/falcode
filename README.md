@@ -198,6 +198,19 @@ Because the default list checks `falcode.sh` before `worktree.sh`, you can use `
 | `show_workspace_numbers` | bool | `true` | Prefix each workspace label with its 1-based index (e.g. `1 main`), matching the default `1`–`9` direct-jump keybinds |
 | `show_tab_numbers` | bool | `true` | Prefix each inner tab label with its keybind letter (e.g. `a Agent`), matching the default `a`–`z` direct-jump keybinds |
 
+#### Notifications
+
+Sound alerts fired when an agent changes state. Configured under `ui.notifications`:
+
+```json
+{ "ui": { "notifications": { "sound_on_idle": true, "sound_on_permission": true } } }
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sound_on_idle` | `true` | Play a sound when the agent finishes its turn (`✓`) or asks a question (`?`) |
+| `sound_on_permission` | `true` | Play a sound when the agent is waiting for a permission grant (`!`) |
+
 ### Keybinds
 
 Keybinds live under the `"keybinds"` key in `config.json`. The full structure:
@@ -309,6 +322,17 @@ falcode ships with a built-in dark-purple theme. You can create and share custom
 ```
 
 Each color token requires both `"dark"` and `"light"` values. Omitted tokens fall back to the built-in defaults. The full list of color tokens and their descriptions is in [`internal/config/themes/schema.json`](internal/config/themes/schema.json).
+
+#### Agent status icon colors
+
+These tokens control the foreground color of the icons shown in workspace tabs when an agent is running:
+
+| Token | Default (dark) | Default (light) | Icon | Meaning |
+|-------|---------------|-----------------|------|---------|
+| `agent_working_fg` | `#5FFF87` | `#00AA44` | spinner | Agent is actively processing |
+| `agent_permission_fg` | `#FF5F5F` | `#CC2222` | `!` | Agent awaiting a permission grant |
+| `agent_question_fg` | `#FF8C00` | `#C05800` | `?` | Agent asking the user a question |
+| `agent_done_fg` | `#5FFF87` | `#00AA44` | `✓` | Agent finished its turn |
 
 ### Share a theme
 

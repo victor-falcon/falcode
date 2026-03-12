@@ -62,6 +62,34 @@ const (
 	CloseWorkspaceButtonNone  CloseWorkspaceButton = "none"
 )
 
+// NotificationsConfig controls sound notifications for agent state changes.
+type NotificationsConfig struct {
+	// SoundOnIdle plays a sound when the agent finishes a task (session becomes
+	// idle). Defaults to true when omitted.
+	SoundOnIdle *bool `json:"sound_on_idle,omitempty"`
+	// SoundOnPermission plays a sound when the agent is waiting for a
+	// permission decision. Defaults to true when omitted.
+	SoundOnPermission *bool `json:"sound_on_permission,omitempty"`
+}
+
+// GetSoundOnIdle returns whether to play a sound when the agent becomes idle.
+// Defaults to true.
+func (n *NotificationsConfig) GetSoundOnIdle() bool {
+	if n == nil || n.SoundOnIdle == nil {
+		return true
+	}
+	return *n.SoundOnIdle
+}
+
+// GetSoundOnPermission returns whether to play a sound when the agent requests
+// a permission decision. Defaults to true.
+func (n *NotificationsConfig) GetSoundOnPermission() bool {
+	if n == nil || n.SoundOnPermission == nil {
+		return true
+	}
+	return *n.SoundOnPermission
+}
+
 // UIConfig holds all UI display options.
 type UIConfig struct {
 	// Theme is the name of the color theme to use. Defaults to "default".
@@ -94,6 +122,8 @@ type UIConfig struct {
 	// (e.g. "a editor", "b console"). Matches the default a-z go_to_tab
 	// keybinds. Defaults to true.
 	ShowTabNumbers *bool `json:"show_tab_numbers,omitempty"`
+	// Notifications controls sound notifications for agent state changes.
+	Notifications *NotificationsConfig `json:"notifications,omitempty"`
 }
 
 // GetTheme returns the configured theme name, falling back to "default".
@@ -183,6 +213,14 @@ func (u *UIConfig) GetShowTabNumbers() bool {
 		return true
 	}
 	return *u.ShowTabNumbers
+}
+
+// GetNotifications returns the notifications configuration, never nil.
+func (u *UIConfig) GetNotifications() *NotificationsConfig {
+	if u == nil || u.Notifications == nil {
+		return &NotificationsConfig{}
+	}
+	return u.Notifications
 }
 
 // Config is the top-level application configuration.
@@ -351,6 +389,9 @@ func mergeUI(base, override *UIConfig) *UIConfig {
 	}
 	if override.ShowTabNumbers != nil {
 		out.ShowTabNumbers = override.ShowTabNumbers
+	}
+	if override.Notifications != nil {
+		out.Notifications = override.Notifications
 	}
 
 	return out

@@ -121,6 +121,26 @@
         "sheet_separator": {
           "$ref": "#/$defs/colorPair",
           "description": "Color of separator lines in the which-key sheet."
+        },
+        "footer_bg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Background of the footer bar. Defaults to \"transparent\" to inherit the terminal background."
+        },
+        "agent_working_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground color of the animated spinner shown in a workspace tab while the agent is processing."
+        },
+        "agent_permission_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground color of the '!' icon shown in a workspace tab when the agent is awaiting a permission grant."
+        },
+        "agent_question_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground color of the '?' icon shown in a workspace tab when the agent is asking the user a question."
+        },
+        "agent_done_fg": {
+          "$ref": "#/$defs/colorPair",
+          "description": "Foreground color of the '✓' icon briefly shown in a workspace tab when the agent finishes its turn."
         }
       },
       "additionalProperties": false

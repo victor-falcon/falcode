@@ -155,6 +155,14 @@ type Model struct {
 	// Status message displayed in the tab bar gap.
 	statusMsg     string
 	statusClearAt time.Time
+
+	// agentStatuses tracks the current agent status for each non-interactive
+	// command pane. Populated via PaneStatusMsg dispatched by the FIFO reader.
+	agentStatuses map[PaneKey]AgentStatus
+
+	// agentSpinner is a shared spinner used to animate the "working" icon in
+	// workspace tabs. It ticks whenever at least one pane is Working.
+	agentSpinner spinner.Model
 }
 
 // New creates the initial Model. Call SetSend before running the program.
@@ -221,6 +229,8 @@ func New(
 		themeName:       themeName,
 		deleteWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		createWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
+		agentStatuses:   make(map[PaneKey]AgentStatus),
+		agentSpinner:    spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 	}
 }
 
@@ -298,6 +308,29 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case paneRenderTickMsg:
 		// Periodic safety-net: force a View() call and re-arm the tick.
 		return m, paneRenderTick()
+
+	case PaneStatusMsg:
+		prev := m.agentStatuses[msg.Key]
+		// Snapshot whether any pane was already working BEFORE this update,
+		// so we can detect when we need to (re-)start the spinner tick.
+		wasAnyWorking := m.anyPaneWorking()
+		m.agentStatuses[msg.Key] = msg.Status
+		notif := m.cfg.UI.GetNotifications()
+		// Play sounds on meaningful transitions.
+		if prev != msg.Status {
+			switch msg.Status {
+			case AgentStatusDone, AgentStatusQuestion:
+				playSound(SoundEventIdle, notif)
+			case AgentStatusPermission:
+				playSound(SoundEventPermission, notif)
+			}
+		}
+		// Start the agent spinner tick only when transitioning from
+		// "no working panes" to "at least one working pane".
+		if msg.Status == AgentStatusWorking && !wasAnyWorking {
+			return m, m.agentSpinner.Tick
+		}
+		return m, nil
 
 	case PaneExitMsg:
 		// Non-interactive (command) panes show an in-pane restart banner, so we
@@ -391,6 +424,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+		// Drive the agent spinner while any pane is in the Working state.
+		if m.anyPaneWorking() {
+			m.agentSpinner, cmd = m.agentSpinner.Update(msg)
+			if cmd != nil {
+				return m, cmd
+			}
+		}
 		return m, nil
 
 	case animTickMsg:
@@ -432,6 +472,12 @@ func (m *Model) View() string {
 		tabSpinners[m.scriptWSIdx] = m.createWSSpinner.View()
 	}
 
+	// wsAgentStatuses maps workspace index → most urgent agent status.
+	wsAgentStatuses := make(map[int]AgentStatus, len(m.worktrees))
+	for i := range m.worktrees {
+		wsAgentStatuses[i] = m.wsAgentStatus(i)
+	}
+
 	tabBar := RenderTabBar(
 		m.zm,
 		m.worktrees,
@@ -448,6 +494,8 @@ func (m *Model) View() string {
 		m.keybinds,
 		m.styles,
 		tabSpinners,
+		wsAgentStatuses,
+		m.agentSpinner.View(),
 	)
 
 	paneContent := ""
@@ -1204,6 +1252,7 @@ func (m *Model) closeTab(idx int) {
 			p.Stop()
 			delete(m.panes, key)
 		}
+		delete(m.agentStatuses, key)
 		m.closedCfgTabs[m.activeWS][idx] = true
 		// Move active tab to the nearest still-visible tab.
 		if m.activeInner == idx {
@@ -1219,6 +1268,7 @@ func (m *Model) closeTab(idx int) {
 		p.Stop()
 		delete(m.panes, key)
 	}
+	delete(m.agentStatuses, key)
 	extra := m.extraTabs[m.activeWS]
 	m.extraTabs[m.activeWS] = append(extra[:extraIdx], extra[extraIdx+1:]...)
 
@@ -1231,6 +1281,16 @@ func (m *Model) closeTab(idx int) {
 		newPanes[k] = p
 	}
 	m.panes = newPanes
+
+	// Re-index agent statuses for tabs that shifted down.
+	newStatuses := make(map[PaneKey]AgentStatus, len(m.agentStatuses))
+	for k, s := range m.agentStatuses {
+		if k.Workspace == m.activeWS && k.Tab > idx {
+			k.Tab--
+		}
+		newStatuses[k] = s
+	}
+	m.agentStatuses = newStatuses
 
 	if m.activeInner >= idx && m.activeInner > 0 {
 		m.activeInner--
@@ -1283,6 +1343,12 @@ func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
 			delete(m.panes, key)
 		}
 	}
+	// Clean up agent status entries for the deleted workspace.
+	for key := range m.agentStatuses {
+		if key.Workspace == wsIdx {
+			delete(m.agentStatuses, key)
+		}
+	}
 
 	// Remove the workspace from all parallel slices.
 	m.worktrees = append(m.worktrees[:wsIdx], m.worktrees[wsIdx+1:]...)
@@ -1303,6 +1369,16 @@ func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
 		newPanes[key] = p
 	}
 	m.panes = newPanes
+
+	// Re-index agent status keys for workspaces that shifted down.
+	newStatuses := make(map[PaneKey]AgentStatus, len(m.agentStatuses))
+	for key, s := range m.agentStatuses {
+		if key.Workspace > wsIdx {
+			key.Workspace--
+		}
+		newStatuses[key] = s
+	}
+	m.agentStatuses = newStatuses
 }
 
 // restartPane stops the exited pane, removes it from the registry, and
@@ -1314,12 +1390,20 @@ func (m *Model) restartPane(key PaneKey) (tea.Model, tea.Cmd) {
 		p.Stop()
 		delete(m.panes, key)
 	}
+	// Clear any stale agent status for the restarted pane.
+	delete(m.agentStatuses, key)
+
 	tab := m.tabForKey(key)
 	if tab == nil {
 		return m, nil
 	}
 	wt := m.worktrees[key.Workspace]
 	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
+	// Recreate the FIFO for this pane (both interactive and command panes,
+	// so that tools like opencode running in a shell tab can report status).
+	if pipePath, err := createAgentPipe(key); err == nil {
+		p.SetStatusPipe(pipePath)
+	}
 	m.panes[key] = p
 	send := m.send
 	return m, func() tea.Msg {
@@ -1546,6 +1630,40 @@ func (m *Model) popLayer() {
 // Pane helpers
 // ============================================================
 
+// anyPaneWorking reports whether any pane in any workspace is currently
+// in the Working state. Used to decide whether to keep the agent spinner ticking.
+func (m *Model) anyPaneWorking() bool {
+	for _, s := range m.agentStatuses {
+		if s == AgentStatusWorking {
+			return true
+		}
+	}
+	return false
+}
+
+// wsAgentStatus returns the most urgent agent status across all panes in the
+// given workspace. Priority (high → low): Permission > Working > Done > Idle.
+// Returns AgentStatusIdle if no panes have reported a non-idle status.
+func (m *Model) wsAgentStatus(wsIdx int) AgentStatus {
+	best := AgentStatusIdle
+	for key, s := range m.agentStatuses {
+		if key.Workspace != wsIdx {
+			continue
+		}
+		switch {
+		case s == AgentStatusPermission:
+			return AgentStatusPermission // highest priority — return immediately
+		case s == AgentStatusWorking && best != AgentStatusPermission:
+			best = AgentStatusWorking
+		case s == AgentStatusQuestion && best != AgentStatusWorking && best != AgentStatusPermission:
+			best = AgentStatusQuestion
+		case s == AgentStatusDone && best == AgentStatusIdle:
+			best = AgentStatusDone
+		}
+	}
+	return best
+}
+
 func (m *Model) activePane() *Pane {
 	return m.panes[PaneKey{Workspace: m.activeWS, Tab: m.activeInner}]
 }
@@ -1561,6 +1679,11 @@ func (m *Model) ensurePaneCmd(key PaneKey) tea.Cmd {
 	}
 	wt := m.worktrees[key.Workspace]
 	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
+	// Set up a status pipe for all panes (interactive shell panes included),
+	// so that tools like opencode running in a shell tab can report status.
+	if pipePath, err := createAgentPipe(key); err == nil {
+		p.SetStatusPipe(pipePath)
+	}
 	m.panes[key] = p
 	// If auto_run is disabled, mark the pane as stopped immediately so the
 	// "press Enter to restart" banner is shown without running the command.
@@ -1591,6 +1714,11 @@ func (m *Model) ensurePaneStarted(key PaneKey) {
 	}
 	wt := m.worktrees[key.Workspace]
 	p := NewPane(key, tab, wt.Path, m.paneColsForTab(tab), m.paneHeight())
+	// Set up a status pipe for all panes (interactive shell panes included),
+	// so that tools like opencode running in a shell tab can report status.
+	if pipePath, err := createAgentPipe(key); err == nil {
+		p.SetStatusPipe(pipePath)
+	}
 	m.panes[key] = p
 	// If auto_run is disabled, mark the pane as stopped so the banner is shown.
 	if !tab.IsInteractive() && !tab.ShouldAutoRun() {
