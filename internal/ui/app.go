@@ -533,7 +533,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -593,7 +593,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -617,7 +617,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -646,7 +646,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -678,13 +678,24 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// While the setup script is running, swallow all keys. When the script is
-	// done, any key dismisses the output modal.
+	// While the setup script is running, block input on the script's workspace.
+	// When the script finishes, any key on that workspace dismisses the modal.
+	// On other workspaces, let keys flow through normally.
 	if m.runningScript {
 		if m.scriptDone {
 			m.runningScript = false
+			if m.activeWS == m.scriptWSIdx {
+				// Swallow the key that dismissed the "Done" modal.
+				return m, nil
+			}
+			// On a different workspace: clean up silently, fall through to
+			// normal key handling below.
+		} else if m.activeWS == m.scriptWSIdx {
+			// Script still running on this workspace — block all keys.
+			return m, nil
 		}
-		return m, nil
+		// Script still running but user is on a different workspace — let keys
+		// flow through normally.
 	}
 
 	// Workspace naming prompt intercepts all keys (highest priority).
