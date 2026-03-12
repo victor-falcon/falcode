@@ -63,9 +63,9 @@
     "sheet_group":           { "dark": "gold",           "light": "gold_light"    },
     "sheet_separator":       { "dark": "dark_sep",       "light": "light_sep"     },
     "footer_bg":             { "dark": "transparent",    "light": "transparent"   },
-    "agent_working_fg":      { "dark": "green",          "light": "green_light"   },
+    "agent_working_fg":      { "dark": "green",          "light": "white"   },
     "agent_permission_fg":   { "dark": "agent_red",      "light": "red_light"     },
     "agent_question_fg":     { "dark": "orange",         "light": "orange_light"  },
-    "agent_done_fg":         { "dark": "green",          "light": "green_light"   }
+    "agent_done_fg":         { "dark": "green",          "light": "white"   }
   }
 }
