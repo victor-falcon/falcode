@@ -29,6 +29,11 @@ type layerState struct {
 // animTickMsg drives the sheet spring animation.
 type animTickMsg struct{}
 
+// paneRenderTickMsg is sent by a repeating 1-second ticker to guarantee that
+// the pane display stays current even if a PaneOutputMsg was ever coalesced
+// away or delayed (belt-and-suspenders safety net).
+type paneRenderTickMsg struct{}
+
 // WorkspaceCreatedMsg is dispatched by the background goroutine when a new
 // git worktree has been successfully created.
 type WorkspaceCreatedMsg struct{ Worktree *git.Worktree }
@@ -240,10 +245,13 @@ func (m *Model) Init() tea.Cmd {
 	// after bubbletea has finished its own terminal setup (alt screen, mouse,
 	// etc.). Sending it before prog.Run() risks being overwritten by bubbletea's
 	// initialisation sequences.
-	return func() tea.Msg {
-		os.Stdout.WriteString("\x1b[>1u") //nolint:errcheck
-		return nil
-	}
+	return tea.Batch(
+		func() tea.Msg {
+			os.Stdout.WriteString("\x1b[>1u") //nolint:errcheck
+			return nil
+		},
+		paneRenderTick(),
+	)
 }
 
 // Update implements tea.Model.
@@ -263,13 +271,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		// The terminal regained focus (e.g. user switched back to this tab).
-		// Force a full repaint to flush bubbletea's stale line-diff cache,
-		// which otherwise causes duplicated or mispositioned content.
+		// Forward a focus-in event to the active PTY so that programs using
+		// focus-tracking (\x1b[?1004h) — such as lazygit/tcell — can trigger
+		// their own full refresh. Then force a full repaint to flush bubbletea's
+		// stale line-diff cache, which otherwise causes duplicated or
+		// mispositioned content.
+		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			pane.Write([]byte("\x1b[I"))
+		}
 		return m, tea.ClearScreen
+
+	case tea.BlurMsg:
+		// The terminal lost focus — forward a focus-out event to the active PTY.
+		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			pane.Write([]byte("\x1b[O"))
+		}
+		return m, nil
 
 	case PaneOutputMsg:
 		// Output arrived; bubbletea will call View() to re-render.
 		return m, nil
+
+	case paneRenderTickMsg:
+		// Periodic safety-net: force a View() call and re-arm the tick.
+		return m, paneRenderTick()
 
 	case PaneExitMsg:
 		// Non-interactive (command) panes show an in-pane restart banner, so we
@@ -1886,5 +1911,13 @@ func prefixKeyBytes(prefix string) []byte {
 func animTick() tea.Cmd {
 	return tea.Tick(time.Second/sheetFPS, func(_ time.Time) tea.Msg {
 		return animTickMsg{}
+	})
+}
+
+// paneRenderTick returns a command that sends a paneRenderTickMsg after 1 second.
+// It is re-armed every time the message is handled in Update() so it repeats indefinitely.
+func paneRenderTick() tea.Cmd {
+	return tea.Tick(time.Second, func(_ time.Time) tea.Msg {
+		return paneRenderTickMsg{}
 	})
 }

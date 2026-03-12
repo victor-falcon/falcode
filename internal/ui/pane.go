@@ -42,17 +42,24 @@ type Pane struct {
 	exited  bool
 	done    chan struct{}
 	exitErr error
+
+	// notify is a size-1 channel used to coalesce PTY output notifications.
+	// The PTY read goroutine signals it non-blocking; a dedicated sender
+	// goroutine drains it and calls send(PaneOutputMsg{}) so that the read
+	// loop never blocks on bubbletea's message channel.
+	notify chan struct{}
 }
 
 // NewPane creates a Pane but does not start it yet.
 func NewPane(key PaneKey, cfg *config.Tab, dir string, cols, rows int) *Pane {
 	return &Pane{
-		cfg:  cfg,
-		key:  key,
-		dir:  dir,
-		cols: cols,
-		rows: rows,
-		done: make(chan struct{}),
+		cfg:    cfg,
+		key:    key,
+		dir:    dir,
+		cols:   cols,
+		rows:   rows,
+		done:   make(chan struct{}),
+		notify: make(chan struct{}, 1),
 	}
 }
 
@@ -96,6 +103,23 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 	p.cmd = cmd.Cmd
 	p.started = true
 
+	notify := p.notify
+
+	// Sender goroutine: drains the notify channel and calls send() so that the
+	// PTY read loop below is never blocked waiting on bubbletea's message queue.
+	go func() {
+		for range notify {
+			send(PaneOutputMsg{Key: p.key})
+		}
+	}()
+
+	// PTY read goroutine: reads raw bytes, feeds them into the VT emulator, then
+	// signals the sender goroutine via a non-blocking send into the size-1
+	// notify channel. If a notification is already pending the select falls
+	// through immediately — the vt10x state has already been updated, so the
+	// next send will render the latest state. This ensures the goroutine never
+	// blocks on bubbletea's message channel, which prevents the PTY kernel
+	// buffer from filling and stalling lazygit's timer-triggered refreshes.
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -104,7 +128,10 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 				p.mu.Lock()
 				p.vt.Write(buf[:n])
 				p.mu.Unlock()
-				send(PaneOutputMsg{Key: p.key})
+				select {
+				case notify <- struct{}{}:
+				default: // notification already pending; vt state is up-to-date
+				}
 			}
 			if err != nil {
 				break
@@ -115,6 +142,7 @@ func (p *Pane) Start(send func(tea.Msg)) error {
 		p.exitErr = exitErr
 		p.exited = true
 		p.mu.Unlock()
+		close(notify) // unblocks the sender goroutine
 		close(p.done)
 		send(PaneExitMsg{Key: p.key, Err: exitErr})
 	}()
