@@ -4,14 +4,7 @@ A terminal multiplexer for multi-agent git worktree workflows.
 
 Each outer tab (workspace) maps to a git worktree discovered in the current repository. Each workspace has inner tabs that run configurable tools — AI coding agent, lazygit, or an interactive shell — each in its own PTY. The workflow it enables: one worktree per feature branch, each with its own agent running in parallel.
 
-```
-┌─[ 1 main ]──[ 2 feature/auth ]──[ 3 feature/api ]───────────────────────┐
-│ [ a Agent ]  [ b Git ]  [ c Console ]  [+]                               │
-│                                                                           │
-│  opencode running in this worktree's PTY                                 │
-│                                                                           │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+![falcode screenshot](assets/screenshot.png)
 
 ## Installation
 
