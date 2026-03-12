@@ -221,6 +221,7 @@
         "prev_tab",
         "new_tab",
         "close_tab",
+        "rename_tab",
         "next_workspace",
         "prev_workspace",
         "new_workspace",
@@ -228,6 +229,7 @@
         "passthrough",
         "go_to_tab",
         "go_to_workspace",
+        "toggle_scheme",
         "lock"
       ]
     }

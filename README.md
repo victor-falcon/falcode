@@ -52,7 +52,7 @@ The default prefix key is `Ctrl+B` (tmux-style). Press the prefix to enter comma
 
 | Sequence | Action |
 |----------|--------|
-| `Ctrl+B` `q` | Quit |
+| `Ctrl+B` `q` | Quit (press `y` to confirm, any other key to cancel) |
 | `Ctrl+B` `Ctrl+B` | Send prefix key through to the active pane |
 | `Ctrl+B` `1`–`9` | Jump directly to workspace 1–9 |
 | `Ctrl+B` `a`–`z` | Jump directly to inner tab a–z |
@@ -329,10 +329,10 @@ These tokens control the foreground color of the icons shown in workspace tabs w
 
 | Token | Default (dark) | Default (light) | Icon | Meaning |
 |-------|---------------|-----------------|------|---------|
-| `agent_working_fg` | `#5FFF87` | `#00AA44` | spinner | Agent is actively processing |
+| `agent_working_fg` | `#5FFF87` | `#FFFFFF` | spinner | Agent is actively processing |
 | `agent_permission_fg` | `#FF5F5F` | `#CC2222` | `!` | Agent awaiting a permission grant |
 | `agent_question_fg` | `#FF8C00` | `#C05800` | `?` | Agent asking the user a question |
-| `agent_done_fg` | `#5FFF87` | `#00AA44` | `✓` | Agent finished its turn |
+| `agent_done_fg` | `#5FFF87` | `#FFFFFF` | `✓` | Agent finished its turn |
 
 ### Share a theme
 
