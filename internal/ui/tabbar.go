@@ -74,6 +74,8 @@ func TabBarHeight(ui *config.UIConfig) int {
 
 // RenderTabBar renders the tab bar. In compact mode a single unified row is
 // produced; otherwise the classic two-row layout (workspace + inner) is used.
+// deletingWSIdx is the index of the workspace currently being deleted (-1 if
+// none); spinnerChar is the current braille animation frame shown on that tab.
 func RenderTabBar(
 	zm *zone.Manager,
 	worktrees []*git.Worktree,
@@ -88,17 +90,21 @@ func RenderTabBar(
 	ui *config.UIConfig,
 	keybinds *config.KeybindsConfig,
 	st uiStyles,
+	deletingWSIdx int,
+	spinnerChar string,
 ) string {
 	if ui.GetCompactTabs() {
 		return renderCompactRow(zm, worktrees, innerTabs, extraTabs, closedCfgTabs, renamedCfgTabs,
-			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, keybinds, st)
+			activeWS, activeInner, totalWidth, prefixMode, statusMsg, ui, keybinds, st, deletingWSIdx, spinnerChar)
 	}
-	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, keybinds, st)
+	wsRow := renderWorkspaceRow(zm, worktrees, activeWS, totalWidth, prefixMode, statusMsg, ui, keybinds, st, deletingWSIdx, spinnerChar)
 	innerRow := renderInnerRow(zm, innerTabs, extraTabs, closedCfgTabs, renamedCfgTabs, activeInner, totalWidth, ui, keybinds, st)
 	return lipgloss.JoinVertical(lipgloss.Left, wsRow, innerRow)
 }
 
 // renderWorkspaceRow renders the top row of workspace (outer) tabs.
+// deletingWSIdx is the index of the workspace being deleted (-1 if none);
+// spinnerChar replaces the × close button on that tab.
 func renderWorkspaceRow(
 	zm *zone.Manager,
 	worktrees []*git.Worktree,
@@ -108,6 +114,8 @@ func renderWorkspaceRow(
 	ui *config.UIConfig,
 	keybinds *config.KeybindsConfig,
 	st uiStyles,
+	deletingWSIdx int,
+	spinnerChar string,
 ) string {
 	closeMode := ui.GetCloseWorkspaceButton()
 
@@ -145,7 +153,19 @@ func renderWorkspaceRow(
 				(closeMode == config.CloseWorkspaceButtonFocus && isActive))
 
 		var tabStr string
-		if canClose {
+		if i == deletingWSIdx {
+			// Workspace is being deleted: show a spinner in place of ×.
+			// The name part is still clickable (for workspace switching).
+			if isActive {
+				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+				spinnerPart := st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" " + spinnerChar)
+				tabStr = namePart + spinnerPart
+			} else {
+				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+				spinnerPart := st.WorkspaceInactive.PaddingLeft(0).Render(" " + spinnerChar)
+				tabStr = namePart + spinnerPart
+			}
+		} else if canClose {
 			if isActive {
 				namePart := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
 				closePart := zm.Mark(WorkspaceCloseZoneID(i), st.WorkspaceActive.Bold(false).PaddingLeft(0).Render(" ×"))
@@ -330,6 +350,8 @@ func renderInnerRow(
 // Inactive workspace tabs that precede the active workspace are shown on the
 // left; those that follow are shown on the right, before the trailing gap.
 // The new-workspace + button is anchored to the far right.
+// deletingWSIdx is the index of the workspace being deleted (-1 if none);
+// spinnerChar replaces the × close button on that tab.
 func renderCompactRow(
 	zm *zone.Manager,
 	worktrees []*git.Worktree,
@@ -343,6 +365,8 @@ func renderCompactRow(
 	ui *config.UIConfig,
 	keybinds *config.KeybindsConfig,
 	st uiStyles,
+	deletingWSIdx int,
+	spinnerChar string,
 ) string {
 	closeWSMode := ui.GetCloseWorkspaceButton()
 	closeTabMode := ui.GetCloseTabButton()
@@ -373,6 +397,18 @@ func renderCompactRow(
 		canClose := !wt.IsMain && len(worktrees) > 1 &&
 			(closeWSMode == config.CloseWorkspaceButtonAll ||
 				(closeWSMode == config.CloseWorkspaceButtonFocus && isActive))
+
+		if i == deletingWSIdx {
+			// Workspace is being deleted: spinner replaces ×. Name still clickable.
+			if isActive {
+				name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))
+				spinner := st.WorkspaceActive.Bold(false).PaddingLeft(0).PaddingRight(0).Render(" " + spinnerChar)
+				return name + spinner
+			}
+			name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceInactive, st.WorkspaceTabNumInactive, false))
+			spinner := st.WorkspaceInactive.PaddingLeft(0).PaddingRight(0).Render(" " + spinnerChar)
+			return name + spinner
+		}
 		if canClose {
 			if isActive {
 				name := zm.Mark(WorkspaceTabZoneID(i), buildWSContent(st.WorkspaceActive, st.WorkspaceTabNumActive, false))

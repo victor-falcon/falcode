@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
@@ -121,12 +122,14 @@ type Model struct {
 	wsDeleteTarget  int // workspace index captured when delete was initiated
 
 	// Workspace deletion progress state (shown after confirmation).
-	deletingWS   bool  // progress modal is visible
-	deleteWSStep int   // number of completed steps: 0=none, 1=ref removed, 2=folder deleted, 3=tab removed
-	deleteWSErr  error // error from a deletion step, if any
+	deletingWS      bool          // deletion toast is visible
+	deleteWSStep    int           // number of completed steps: 0=none, 1=ref removed, 2=folder deleted, 3=tab removed
+	deleteWSErr     error         // error from a deletion step, if any
+	deleteWSSpinner spinner.Model // animated spinner shown in the toast and tab during deletion
 
 	// Workspace creation loading state: true while git worktree add is running.
-	creatingWS bool
+	creatingWS      bool
+	createWSSpinner spinner.Model // animated spinner shown in the creating-workspace modal and script output modal
 
 	// Worktree setup script execution state.
 	runningScript bool
@@ -179,26 +182,28 @@ func New(
 	wsBranch.CharLimit = 128
 
 	return &Model{
-		cfg:            cfg,
-		keybinds:       keybinds,
-		styles:         newStyles(theme),
-		zm:             zm,
-		worktrees:      worktrees,
-		repoRoot:       worktrees[0].Path,
-		cfgTabs:        cfg.Tabs,
-		extraTabs:      extraTabs,
-		closedCfgTabs:  closedCfgTabs,
-		renamedCfgTabs: renamedCfgTabs,
-		panes:          make(map[PaneKey]*Pane),
-		width:          cols,
-		height:         rows,
-		sheet:          NewSheet(),
-		tabNameInput:   ti,
-		wsNameInput:    wsName,
-		wsBranchInput:  wsBranch,
-		currentLayer:   keybinds.Bindings,
-		layerTitle:     "falcode",
-		version:        version,
+		cfg:             cfg,
+		keybinds:        keybinds,
+		styles:          newStyles(theme),
+		zm:              zm,
+		worktrees:       worktrees,
+		repoRoot:        worktrees[0].Path,
+		cfgTabs:         cfg.Tabs,
+		extraTabs:       extraTabs,
+		closedCfgTabs:   closedCfgTabs,
+		renamedCfgTabs:  renamedCfgTabs,
+		panes:           make(map[PaneKey]*Pane),
+		width:           cols,
+		height:          rows,
+		sheet:           NewSheet(),
+		tabNameInput:    ti,
+		wsNameInput:     wsName,
+		wsBranchInput:   wsBranch,
+		currentLayer:    keybinds.Bindings,
+		layerTitle:      "falcode",
+		version:         version,
+		deleteWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
+		createWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 	}
 }
 
@@ -318,14 +323,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case 1:
 			return m, m.deleteWSFolderCmd()
 		case 2:
-			// Dispatch step 3 after a 100ms pause so the "Remove tab" step is
-			// visible in the modal before the workspace disappears.
+			// Brief pause so the toast can show "Removing tab..." before it
+			// disappears along with the workspace.
 			return m, tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
 				return WorkspaceDeleteProgressMsg{Step: 3}
 			})
 		case 3:
 			m.finalizeDeleteWorkspace(m.wsDeleteTarget)
 			m.deletingWS = false
+		}
+		return m, nil
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		if m.deletingWS {
+			m.deleteWSSpinner, cmd = m.deleteWSSpinner.Update(msg)
+			if cmd != nil {
+				return m, cmd
+			}
+		}
+		if m.creatingWS || m.runningScript {
+			m.createWSSpinner, cmd = m.createWSSpinner.Update(msg)
+			if cmd != nil {
+				return m, cmd
+			}
 		}
 		return m, nil
 
@@ -358,6 +379,12 @@ func (m *Model) View() string {
 		return "Initializing…\n"
 	}
 
+	deletingWSIdx := -1
+	if m.deletingWS {
+		deletingWSIdx = m.wsDeleteTarget
+	}
+	tabSpinnerChar := m.deleteWSSpinner.View()
+
 	tabBar := RenderTabBar(
 		m.zm,
 		m.worktrees,
@@ -373,6 +400,8 @@ func (m *Model) View() string {
 		m.cfg.UI,
 		m.keybinds,
 		m.styles,
+		deletingWSIdx,
+		tabSpinnerChar,
 	)
 
 	paneContent := ""
@@ -427,12 +456,6 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
 	}
 
-	// Overlay the workspace deletion progress modal.
-	if m.deletingWS {
-		progress := m.renderDeleteWSProgressModal()
-		paneContent = overlayCentered(paneContent, progress, m.width, m.paneHeight())
-	}
-
 	// Overlay a loading indicator while the git worktree is being created.
 	if m.creatingWS {
 		loading := m.renderWSCreatingModal()
@@ -460,6 +483,13 @@ func (m *Model) View() string {
 		sheetLines := strings.Split(sheetStr, "\n")
 		offset := m.sheet.AnimOffset(len(sheetLines))
 		view = overlayBottomRight(view, sheetStr, m.width, offset)
+	}
+
+	// Overlay the deletion toast at the top-right — applied last so it is
+	// always visible regardless of which workspace is active.
+	if m.deletingWS {
+		toast := m.renderDeleteWSToast()
+		view = overlayTopRight(view, toast, m.width)
 	}
 
 	// Let bubblezone scan the output to record zone positions for mouse hits.
@@ -498,7 +528,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -558,7 +588,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -582,7 +612,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -611,7 +641,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.deletingWS || m.prefixMode || m.creatingWS || m.runningScript {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.prefixMode || m.creatingWS || m.runningScript {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -631,13 +661,10 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// While deletion is in progress, swallow all keys. If a step failed, any
-	// key dismisses the error modal.
-	if m.deletingWS {
-		if m.deleteWSErr != nil {
-			m.deletingWS = false
-			m.deleteWSErr = nil
-		}
+	// If a deletion step failed, Esc dismisses the error toast.
+	if m.deletingWS && m.deleteWSErr != nil && msg.Type == tea.KeyEsc {
+		m.deletingWS = false
+		m.deleteWSErr = nil
 		return m, nil
 	}
 
@@ -782,6 +809,11 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Workspace (outer) tabs — close button takes priority over tab switch.
 	for i := range m.worktrees {
 		if zi := m.zm.Get(WorkspaceCloseZoneID(i)); zi != nil && zi.InBounds(msg) {
+			// Suppress the close button on the workspace currently being deleted
+			// (it has a spinner there instead of ×, but guard here too).
+			if m.deletingWS && i == m.wsDeleteTarget {
+				return m, nil
+			}
 			return m, m.deleteWorkspaceCmd(i)
 		}
 		if zi := m.zm.Get(WorkspaceTabZoneID(i)); zi != nil && zi.InBounds(msg) {
@@ -988,6 +1020,10 @@ func (m *Model) switchWorkspaceCmd(idx int) tea.Cmd {
 // deleteWorkspaceCmd runs the same guard checks as ActionDeleteWorkspace and, when
 // the workspace is deletable, triggers the dirty-check + confirmation flow.
 func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
+	if m.deletingWS {
+		m.setStatus("already deleting a workspace")
+		return nil
+	}
 	if len(m.worktrees) <= 1 {
 		m.setStatus("cannot delete the only workspace")
 		return nil
@@ -1254,7 +1290,8 @@ func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.creatingWS = true
 		m.wsNameInput.Blur()
 		m.wsBranchInput.Blur()
-		return m, m.createWorkspaceCmd(wsName, branchName)
+		m.createWSSpinner = spinner.New(spinner.WithSpinner(spinner.Hamburger))
+		return m, tea.Batch(m.createWorkspaceCmd(wsName, branchName), m.createWSSpinner.Tick)
 	}
 
 	// Forward keystrokes to the active input.
@@ -1357,7 +1394,8 @@ func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.deletingWS = true
 		m.deleteWSStep = 0
 		m.deleteWSErr = nil
-		return m, m.beginDeleteWorkspaceCmd(wsIdx)
+		m.deleteWSSpinner = spinner.New(spinner.WithSpinner(spinner.Hamburger))
+		return m, tea.Batch(m.beginDeleteWorkspaceCmd(wsIdx), m.deleteWSSpinner.Tick)
 	case "n":
 		m.confirmDeleteWS = false
 		return m, nil
@@ -1578,15 +1616,16 @@ func (m *Model) renderWSCreatingModal() string {
 	st := m.styles
 	title := st.SheetTitle.Render("Creating Workspace")
 	sep := st.SheetSep.Render(strings.Repeat("─", 28))
-	body := st.SheetDesc.Render("Setting up git worktree…")
+	body := st.SheetDesc.Render(m.createWSSpinner.View() + "Setting up git worktree…")
 	content := strings.Join([]string{title, sep, body}, "\n")
 	return st.SheetBox.Render(content)
 }
 
-// renderDeleteWSProgressModal renders the step-by-step deletion progress
-// overlay shown after the user confirms workspace deletion.
-func (m *Model) renderDeleteWSProgressModal() string {
-	const sepWidth = 30
+// renderDeleteWSToast renders the compact top-right toast shown while a
+// workspace is being deleted. It displays the workspace name and the current
+// in-progress step with an animated braille spinner. On error it shows the
+// failure and prompts the user to press Esc to dismiss.
+func (m *Model) renderDeleteWSToast() string {
 	st := m.styles
 
 	wsName := ""
@@ -1594,45 +1633,36 @@ func (m *Model) renderDeleteWSProgressModal() string {
 		wsName = m.worktrees[wsIdx].Name()
 	}
 
-	title := st.SheetTitle.Render(fmt.Sprintf("Deleting '%s'", wsName))
-	sep := st.SheetSep.Render(strings.Repeat("─", sepWidth))
-
-	type stepDef struct {
-		label string
-	}
-	steps := []stepDef{
-		{"Remove git worktree"},
-		{"Delete folder"},
-		{"Remove tab"},
+	// Step labels shown as the current in-progress action.
+	stepLabels := []string{
+		"Removing git worktree...",
+		"Deleting folder...",
+		"Removing tab...",
 	}
 
-	var lines []string
-	lines = append(lines, title, sep)
+	title := st.SheetTitle.Render(fmt.Sprintf("Deleting '%s' workspace.", wsName))
 
-	for i, s := range steps {
-		stepNum := i + 1
-		var indicator string
-		switch {
-		case m.deleteWSErr != nil && m.deleteWSStep == i:
-			// Error occurred at this step.
-			indicator = "!"
-		case stepNum <= m.deleteWSStep:
-			indicator = "✓"
-		case stepNum == m.deleteWSStep+1:
-			indicator = "…"
-		default:
-			indicator = " "
-		}
-		lines = append(lines, st.SheetDesc.Render(fmt.Sprintf("[%s] %s", indicator, s.label)))
-	}
-
+	var stepLine string
 	if m.deleteWSErr != nil {
-		lines = append(lines, sep)
-		lines = append(lines, st.WarningMsg.Render(fmt.Sprintf("Error: %v", m.deleteWSErr)))
-		lines = append(lines, st.SheetDesc.Render("press any key to dismiss"))
+		// Error state: show which step failed and the error.
+		failedLabel := ""
+		if m.deleteWSStep >= 0 && m.deleteWSStep < len(stepLabels) {
+			failedLabel = stepLabels[m.deleteWSStep]
+		}
+		stepLine = st.WarningMsg.Render(fmt.Sprintf("✗ %s", failedLabel)) + "\n" +
+			st.WarningMsg.Render(fmt.Sprintf("  %v", m.deleteWSErr)) + "\n" +
+			st.SheetDesc.Render("Esc to dismiss")
+	} else {
+		spinner := m.deleteWSSpinner.View()
+		label := ""
+		if m.deleteWSStep < len(stepLabels) {
+			label = stepLabels[m.deleteWSStep]
+		}
+		stepLine = st.SheetDesc.Render(fmt.Sprintf("%s %s", spinner, label))
 	}
 
-	return st.SheetBox.Render(strings.Join(lines, "\n"))
+	content := strings.Join([]string{title, stepLine}, "\n")
+	return st.SheetBox.Render(content)
 }
 
 // renderScriptOutputModal renders the setup script output overlay. It shows
@@ -1663,7 +1693,7 @@ func (m *Model) renderScriptOutputModal() string {
 	var statusLine string
 	switch {
 	case !m.scriptDone:
-		statusLine = st.SheetDesc.Render("running…")
+		statusLine = st.SheetDesc.Render(m.createWSSpinner.View() + "running…")
 	case m.scriptErr != nil:
 		errText := st.WarningMsg.Render(fmt.Sprintf("Error: %v", m.scriptErr))
 		statusLine = errText + st.SheetDesc.Render("  ·  press any key")

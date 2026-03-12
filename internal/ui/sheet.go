@@ -226,6 +226,47 @@ func overlayBottomRight(baseStr, sheetStr string, totalWidth, sheetRowOffset int
 	return strings.Join(baseLines, "\n")
 }
 
+// overlayTopRight composites overlayStr over baseStr at the top-right corner.
+// totalWidth is the full width of the base content.
+func overlayTopRight(baseStr, overlayStr string, totalWidth int) string {
+	if overlayStr == "" {
+		return baseStr
+	}
+
+	baseLines := strings.Split(baseStr, "\n")
+	overlayLines := strings.Split(overlayStr, "\n")
+
+	// Find the widest overlay line.
+	overlayW := 0
+	for _, l := range overlayLines {
+		if w := lipgloss.Width(l); w > overlayW {
+			overlayW = w
+		}
+	}
+
+	startCol := totalWidth - overlayW
+	if startCol < 0 {
+		startCol = 0
+	}
+
+	for i, overlayLine := range overlayLines {
+		if i >= len(baseLines) {
+			break
+		}
+		base := baseLines[i]
+
+		// Keep base content up to startCol.
+		left := xansi.Truncate(base, startCol, "")
+		if leftW := lipgloss.Width(left); leftW < startCol {
+			left += strings.Repeat(" ", startCol-leftW)
+		}
+
+		baseLines[i] = left + overlayLine
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
 func padRight(s string, width int) string {
 	if len(s) >= width {
 		return s
