@@ -673,6 +673,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// While in prefix mode the user is navigating falcode's own which-key
+	// overlay. This must take priority over all modal guards so that the user
+	// can always switch workspaces (or take any other prefix action) regardless
+	// of whether a script or creation modal is active.
+	if m.prefixMode {
+		return m.handleLayerKey(msg)
+	}
+
 	// While the worktree is being created, swallow all keys.
 	if m.creatingWS {
 		return m, nil
@@ -749,10 +757,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.tabNameInput, cmd = m.tabNameInput.Update(msg)
 		return m, cmd
-	}
-
-	if m.prefixMode {
-		return m.handleLayerKey(msg)
 	}
 
 	if m.matchesPrefixKey(msg) {
