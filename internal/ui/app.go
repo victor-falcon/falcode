@@ -133,6 +133,7 @@ type Model struct {
 
 	// Worktree setup script execution state.
 	runningScript bool
+	scriptWSIdx   int // workspace index where the setup script is running
 	scriptDone    bool
 	scriptOutput  []string // ring-buffer of the last scriptOutputMax lines
 	scriptTitle   string   // base name of the script being run
@@ -283,6 +284,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, switchCmd
 		}
 		m.runningScript = true
+		m.scriptWSIdx = len(m.worktrees) - 1
 		m.scriptDone = false
 		m.scriptOutput = nil
 		m.scriptErr = nil
@@ -379,11 +381,15 @@ func (m *Model) View() string {
 		return "Initializing…\n"
 	}
 
-	deletingWSIdx := -1
+	// tabSpinners maps workspace index → spinner char for any tab that should
+	// show an animated spinner in place of its × close button.
+	tabSpinners := make(map[int]string)
 	if m.deletingWS {
-		deletingWSIdx = m.wsDeleteTarget
+		tabSpinners[m.wsDeleteTarget] = m.deleteWSSpinner.View()
 	}
-	tabSpinnerChar := m.deleteWSSpinner.View()
+	if m.runningScript && !m.scriptDone {
+		tabSpinners[m.scriptWSIdx] = m.createWSSpinner.View()
+	}
 
 	tabBar := RenderTabBar(
 		m.zm,
@@ -400,8 +406,7 @@ func (m *Model) View() string {
 		m.cfg.UI,
 		m.keybinds,
 		m.styles,
-		deletingWSIdx,
-		tabSpinnerChar,
+		tabSpinners,
 	)
 
 	paneContent := ""
@@ -462,9 +467,9 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, loading, m.width, m.paneHeight())
 	}
 
-	// Overlay the script output modal while the setup script runs (and after
-	// it finishes, until the user presses any key to dismiss).
-	if m.runningScript {
+	// Overlay the script output modal only on the workspace where the script
+	// is running; other workspaces remain fully usable in the meantime.
+	if m.runningScript && m.activeWS == m.scriptWSIdx {
 		scriptModal := m.renderScriptOutputModal()
 		paneContent = overlayCentered(paneContent, scriptModal, m.width, m.paneHeight())
 	}
@@ -809,9 +814,11 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Workspace (outer) tabs — close button takes priority over tab switch.
 	for i := range m.worktrees {
 		if zi := m.zm.Get(WorkspaceCloseZoneID(i)); zi != nil && zi.InBounds(msg) {
-			// Suppress the close button on the workspace currently being deleted
-			// (it has a spinner there instead of ×, but guard here too).
+			// Suppress the close button on tabs that currently show a spinner.
 			if m.deletingWS && i == m.wsDeleteTarget {
+				return m, nil
+			}
+			if m.runningScript && !m.scriptDone && i == m.scriptWSIdx {
 				return m, nil
 			}
 			return m, m.deleteWorkspaceCmd(i)
@@ -1670,7 +1677,14 @@ func (m *Model) renderDeleteWSToast() string {
 // plus a status line indicating whether the script is still running or has
 // finished. When done the user dismisses it with any key.
 func (m *Model) renderScriptOutputModal() string {
-	const innerWidth = 60
+	// Fill most of the terminal width; leave a small margin for the box border.
+	innerWidth := m.width - 10
+	if innerWidth < 60 {
+		innerWidth = 60
+	}
+	if innerWidth > 160 {
+		innerWidth = 160
+	}
 
 	st := m.styles
 	title := st.SheetTitle.Render(fmt.Sprintf("Running %s", m.scriptTitle))
