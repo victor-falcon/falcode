@@ -248,6 +248,16 @@
           "type": "boolean",
           "description": "Show a native OS notification when the agent is waiting for a user reply (?). Defaults to true.",
           "default": true
+        },
+        "provider": {
+          "type": "string",
+          "description": "OS notification backend to use on macOS. \"osascript\" (default) uses the built-in AppleScript command. \"terminal-notifier\" uses the terminal-notifier CLI if available in PATH, falling back to osascript if not found.",
+          "enum": ["osascript", "terminal-notifier"],
+          "default": "osascript"
+        },
+        "activate_app": {
+          "type": "string",
+          "description": "macOS bundle identifier of the application to bring to the foreground when the user clicks a notification. Only used when provider is \"terminal-notifier\". Example: \"com.mitchellh.ghostty\"."
         }
       },
       "additionalProperties": false

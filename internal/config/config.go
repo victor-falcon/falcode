@@ -79,6 +79,15 @@ type NotificationsConfig struct {
 	// NotifyOnQuestion shows an OS notification when the agent is waiting for a
 	// user reply. Defaults to true when omitted.
 	NotifyOnQuestion *bool `json:"notify_on_question,omitempty"`
+	// Provider selects the OS notification backend. "osascript" (default) uses
+	// the built-in AppleScript command on macOS; "terminal-notifier" uses the
+	// terminal-notifier CLI if it is available in PATH, falling back to
+	// osascript when it is not found.
+	Provider string `json:"provider,omitempty"`
+	// ActivateApp is the macOS bundle identifier of the application to bring to
+	// the foreground when the user clicks a notification. Only used when
+	// Provider is "terminal-notifier". Example: "com.mitchellh.ghostty".
+	ActivateApp string `json:"activate_app,omitempty"`
 }
 
 // GetSoundOnIdle returns whether to play a sound when the agent becomes idle.
@@ -124,6 +133,23 @@ func (n *NotificationsConfig) GetNotifyOnQuestion() bool {
 		return true
 	}
 	return *n.NotifyOnQuestion
+}
+
+// GetProvider returns the OS notification provider. Defaults to "osascript".
+func (n *NotificationsConfig) GetProvider() string {
+	if n == nil || n.Provider == "" {
+		return "osascript"
+	}
+	return n.Provider
+}
+
+// GetActivateApp returns the macOS bundle identifier to activate when the user
+// clicks a notification. Empty string means no app is activated.
+func (n *NotificationsConfig) GetActivateApp() string {
+	if n == nil {
+		return ""
+	}
+	return n.ActivateApp
 }
 
 // UIConfig holds all UI display options.
@@ -457,6 +483,12 @@ func mergeNotifications(base, override *NotificationsConfig) *NotificationsConfi
 	}
 	if override.NotifyOnQuestion != nil {
 		out.NotifyOnQuestion = override.NotifyOnQuestion
+	}
+	if override.Provider != "" {
+		out.Provider = override.Provider
+	}
+	if override.ActivateApp != "" {
+		out.ActivateApp = override.ActivateApp
 	}
 	return out
 }

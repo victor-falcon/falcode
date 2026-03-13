@@ -28,6 +28,8 @@ const (
 // Platform dispatch:
 //   - macOS: osascript display notification — zero external dependencies,
 //     works inside any terminal emulator or multiplexer (Ghostty, Zellij, tmux…)
+//   - macOS (terminal-notifier): uses terminal-notifier CLI when configured and
+//     available in PATH; falls back silently to osascript if not found.
 //   - Linux: notify-send, if available via PATH
 //
 // Fire-and-forget goroutine; errors are silently discarded.
@@ -46,10 +48,10 @@ func Send(event Event, worktreeName, projectName string, notif *config.Notificat
 			return
 		}
 	}
-	go sendAsync(event, worktreeName, projectName)
+	go sendAsync(event, worktreeName, projectName, notif)
 }
 
-func sendAsync(event Event, worktreeName, projectName string) {
+func sendAsync(event Event, worktreeName, projectName string, notif *config.NotificationsConfig) {
 	var body string
 	switch event {
 	case EventIdle:
@@ -65,6 +67,22 @@ func sendAsync(event Event, worktreeName, projectName string) {
 
 	switch runtime.GOOS {
 	case "darwin":
+		if notif.GetProvider() == "terminal-notifier" {
+			if path, err := exec.LookPath("terminal-notifier"); err == nil {
+				args := []string{
+					"-title", "falcode",
+					"-subtitle", subtitle,
+					"-message", body,
+				}
+				if app := notif.GetActivateApp(); app != "" {
+					args = append(args, "-activate", app)
+				}
+				//nolint:errcheck
+				exec.Command(path, args...).Run()
+				return
+			}
+			// terminal-notifier not found in PATH — fall through to osascript.
+		}
 		// osascript is always available on macOS — no external dependencies.
 		// Notifications appear associated with the calling terminal app (e.g.
 		// Ghostty), fully decoupled from the multiplexer (Zellij, tmux, etc.).

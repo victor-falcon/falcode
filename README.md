@@ -200,16 +200,21 @@ Because the default list checks `falcode.sh` before `worktree.sh`, you can use `
 
 #### Notifications
 
-Sound alerts fired when an agent changes state. Configured under `ui.notifications`:
+Sound and OS notifications fired when an agent changes state. Configured as a root-level `notifications` key:
 
 ```json
-{ "ui": { "notifications": { "sound_on_idle": true, "sound_on_permission": true } } }
+{ "notifications": { "sound_on_idle": true, "sound_on_permission": true, "notify_on_idle": true, "notify_on_permission": true, "notify_on_question": true } }
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `sound_on_idle` | `true` | Play a sound when the agent finishes its turn (`✓`) or asks a question (`?`) |
 | `sound_on_permission` | `true` | Play a sound when the agent is waiting for a permission grant (`!`) |
+| `notify_on_idle` | `true` | Show an OS notification when the agent finishes its turn or answers a question |
+| `notify_on_permission` | `true` | Show an OS notification when the agent is waiting for a permission grant |
+| `notify_on_question` | `true` | Show an OS notification when the agent is waiting for a user reply |
+| `provider` | `"osascript"` | Notification backend: `"osascript"` (built-in, no dependencies) or `"terminal-notifier"` (requires `brew install terminal-notifier`; falls back to `osascript` if not found) |
+| `activate_app` | `""` | macOS bundle ID to bring to the foreground when the notification is clicked. Only used with `terminal-notifier` (e.g. `"com.mitchellh.ghostty"`) |
 
 ### Keybinds
 
