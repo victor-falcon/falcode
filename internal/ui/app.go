@@ -34,6 +34,11 @@ type animTickMsg struct{}
 // away or delayed (belt-and-suspenders safety net).
 type paneRenderTickMsg struct{}
 
+// idleSoundMsg is sent after a short debounce delay when a pane transitions to
+// AgentStatusDone. We only play the idle sound if the pane is still done when
+// this fires, so brief idle gaps between tool calls don't produce spurious beeps.
+type idleSoundMsg struct{ key PaneKey }
+
 // WorkspaceCreatedMsg is dispatched by the background goroutine when a new
 // git worktree has been successfully created.
 type WorkspaceCreatedMsg struct{ Worktree *git.Worktree }
@@ -317,9 +322,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agentStatuses[msg.Key] = msg.Status
 		notif := m.cfg.UI.GetNotifications()
 		// Play sounds on meaningful transitions.
+		var soundCmd tea.Cmd
 		if prev != msg.Status {
 			switch msg.Status {
-			case AgentStatusDone, AgentStatusQuestion:
+			case AgentStatusDone:
+				// Debounce: only play if the agent is still idle after 400ms.
+				// This prevents spurious sounds from brief idle gaps between tool calls.
+				key := msg.Key
+				soundCmd = tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+					return idleSoundMsg{key: key}
+				})
+			case AgentStatusQuestion:
 				playSound(SoundEventIdle, notif)
 			case AgentStatusPermission:
 				playSound(SoundEventPermission, notif)
@@ -328,7 +341,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Start the agent spinner tick only when transitioning from
 		// "no working panes" to "at least one working pane".
 		if msg.Status == AgentStatusWorking && !wasAnyWorking {
-			return m, m.agentSpinner.Tick
+			return m, tea.Batch(m.agentSpinner.Tick, soundCmd)
+		}
+		return m, soundCmd
+
+	case idleSoundMsg:
+		// Only play if the pane is still done (agent didn't resume working).
+		if m.agentStatuses[msg.key] == AgentStatusDone {
+			playSound(SoundEventIdle, m.cfg.UI.GetNotifications())
 		}
 		return m, nil
 
