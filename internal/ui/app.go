@@ -334,10 +334,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if prev != msg.Status {
 			switch msg.Status {
 			case AgentStatusDone:
-				// Debounce: only notify if the agent is still idle after 400ms.
+				// Debounce: only notify if the agent is still idle after 500ms.
 				// This prevents spurious sounds/notifications from brief idle gaps between tool calls.
 				key := msg.Key
-				notifyCmd = tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+				notifyCmd = tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
 					return idleNotifyMsg{key: key}
 				})
 			case AgentStatusQuestion:
