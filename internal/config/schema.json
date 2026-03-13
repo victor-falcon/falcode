@@ -36,6 +36,10 @@
       "description": "Ordered list of paths relative to the newly created worktree to search for a setup script. The first existing file is executed after the worktree is created. Defaults to [\"falcode.sh\", \"worktree.sh\"].",
       "items": { "type": "string" },
       "default": ["falcode.sh", "worktree.sh"]
+    },
+    "notifications": {
+      "$ref": "#/$defs/notificationsConfig",
+      "description": "Sound and OS notification settings for agent status changes."
     }
   },
   "additionalProperties": false,
@@ -96,23 +100,6 @@
           "type": "boolean",
           "description": "When true, each inner tab label is prefixed with its keybind letter (e.g. \"a editor\", \"b console\"). Matches the default a-z go_to_tab keybinds. Defaults to true.",
           "default": true
-        },
-        "notifications": {
-          "type": "object",
-          "description": "Sound notification settings for agent status changes.",
-          "properties": {
-            "sound_on_idle": {
-              "type": "boolean",
-              "description": "Play a sound when the agent finishes its turn (becomes idle or shows ✓ / ?). Defaults to true.",
-              "default": true
-            },
-            "sound_on_permission": {
-              "type": "boolean",
-              "description": "Play a sound when the agent is waiting for a permission grant (!). Defaults to true.",
-              "default": true
-            }
-          },
-          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -232,6 +219,38 @@
         "toggle_scheme",
         "lock"
       ]
+    },
+    "notificationsConfig": {
+      "type": "object",
+      "description": "Sound and OS notification settings for agent status changes.",
+      "properties": {
+        "sound_on_idle": {
+          "type": "boolean",
+          "description": "Play a sound when the agent finishes its turn (becomes idle or answers a question). Defaults to true.",
+          "default": true
+        },
+        "sound_on_permission": {
+          "type": "boolean",
+          "description": "Play a sound when the agent is waiting for a permission grant (!). Defaults to true.",
+          "default": true
+        },
+        "notify_on_idle": {
+          "type": "boolean",
+          "description": "Show a native OS notification when the agent finishes its turn (becomes idle or answers a question). Defaults to true.",
+          "default": true
+        },
+        "notify_on_permission": {
+          "type": "boolean",
+          "description": "Show a native OS notification when the agent is waiting for a permission grant (!). Defaults to true.",
+          "default": true
+        },
+        "notify_on_question": {
+          "type": "boolean",
+          "description": "Show a native OS notification when the agent is waiting for a user reply (?). Defaults to true.",
+          "default": true
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

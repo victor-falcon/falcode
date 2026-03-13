@@ -62,7 +62,7 @@ const (
 	CloseWorkspaceButtonNone  CloseWorkspaceButton = "none"
 )
 
-// NotificationsConfig controls sound notifications for agent state changes.
+// NotificationsConfig controls sound and OS notifications for agent state changes.
 type NotificationsConfig struct {
 	// SoundOnIdle plays a sound when the agent finishes a task (session becomes
 	// idle). Defaults to true when omitted.
@@ -70,6 +70,15 @@ type NotificationsConfig struct {
 	// SoundOnPermission plays a sound when the agent is waiting for a
 	// permission decision. Defaults to true when omitted.
 	SoundOnPermission *bool `json:"sound_on_permission,omitempty"`
+	// NotifyOnIdle shows an OS notification when the agent finishes a task or
+	// has answered a question. Defaults to true when omitted.
+	NotifyOnIdle *bool `json:"notify_on_idle,omitempty"`
+	// NotifyOnPermission shows an OS notification when the agent is waiting for
+	// a permission decision. Defaults to true when omitted.
+	NotifyOnPermission *bool `json:"notify_on_permission,omitempty"`
+	// NotifyOnQuestion shows an OS notification when the agent is waiting for a
+	// user reply. Defaults to true when omitted.
+	NotifyOnQuestion *bool `json:"notify_on_question,omitempty"`
 }
 
 // GetSoundOnIdle returns whether to play a sound when the agent becomes idle.
@@ -88,6 +97,33 @@ func (n *NotificationsConfig) GetSoundOnPermission() bool {
 		return true
 	}
 	return *n.SoundOnPermission
+}
+
+// GetNotifyOnIdle returns whether to show an OS notification when the agent
+// becomes idle. Defaults to true.
+func (n *NotificationsConfig) GetNotifyOnIdle() bool {
+	if n == nil || n.NotifyOnIdle == nil {
+		return true
+	}
+	return *n.NotifyOnIdle
+}
+
+// GetNotifyOnPermission returns whether to show an OS notification when the
+// agent requests a permission decision. Defaults to true.
+func (n *NotificationsConfig) GetNotifyOnPermission() bool {
+	if n == nil || n.NotifyOnPermission == nil {
+		return true
+	}
+	return *n.NotifyOnPermission
+}
+
+// GetNotifyOnQuestion returns whether to show an OS notification when the
+// agent is waiting for a user reply. Defaults to true.
+func (n *NotificationsConfig) GetNotifyOnQuestion() bool {
+	if n == nil || n.NotifyOnQuestion == nil {
+		return true
+	}
+	return *n.NotifyOnQuestion
 }
 
 // UIConfig holds all UI display options.
@@ -122,8 +158,6 @@ type UIConfig struct {
 	// (e.g. "a editor", "b console"). Matches the default a-z go_to_tab
 	// keybinds. Defaults to true.
 	ShowTabNumbers *bool `json:"show_tab_numbers,omitempty"`
-	// Notifications controls sound notifications for agent state changes.
-	Notifications *NotificationsConfig `json:"notifications,omitempty"`
 }
 
 // GetTheme returns the configured theme name, falling back to "default".
@@ -216,11 +250,11 @@ func (u *UIConfig) GetShowTabNumbers() bool {
 }
 
 // GetNotifications returns the notifications configuration, never nil.
-func (u *UIConfig) GetNotifications() *NotificationsConfig {
-	if u == nil || u.Notifications == nil {
+func (c *Config) GetNotifications() *NotificationsConfig {
+	if c == nil || c.Notifications == nil {
 		return &NotificationsConfig{}
 	}
-	return u.Notifications
+	return c.Notifications
 }
 
 // Config is the top-level application configuration.
@@ -231,9 +265,10 @@ type Config struct {
 	// AppendedTabs are additional tabs appended after the resolved Tabs list.
 	// Useful in a repo-level falcode.json to add project-specific tabs on top
 	// of the globally configured ones.
-	AppendedTabs []*Tab          `json:"appended_tabs,omitempty"`
-	UI           *UIConfig       `json:"ui,omitempty"`
-	Keybinds     *KeybindsConfig `json:"keybinds,omitempty"`
+	AppendedTabs  []*Tab               `json:"appended_tabs,omitempty"`
+	UI            *UIConfig            `json:"ui,omitempty"`
+	Keybinds      *KeybindsConfig      `json:"keybinds,omitempty"`
+	Notifications *NotificationsConfig `json:"notifications,omitempty"`
 	// WorktreeScripts is an ordered list of paths relative to the newly created
 	// worktree to search for a setup script. The first existing file is
 	// executed after a new worktree is created. Defaults to
@@ -316,6 +351,9 @@ func Load(cwd string) (*Config, error) {
 		result.Keybinds = base.Keybinds
 	}
 
+	// notifications: field-by-field merge — repo non-zero values win.
+	result.Notifications = mergeNotifications(base.Notifications, repoCfg.Notifications)
+
 	// worktree_scripts: repo wins when non-empty.
 	if len(repoCfg.WorktreeScripts) > 0 {
 		result.WorktreeScripts = repoCfg.WorktreeScripts
@@ -390,9 +428,35 @@ func mergeUI(base, override *UIConfig) *UIConfig {
 	if override.ShowTabNumbers != nil {
 		out.ShowTabNumbers = override.ShowTabNumbers
 	}
-	if override.Notifications != nil {
-		out.Notifications = override.Notifications
-	}
 
+	return out
+}
+
+// mergeNotifications merges two NotificationsConfig values field-by-field.
+// Repo (override) non-nil pointer values take precedence over the base.
+// Either argument may be nil.
+func mergeNotifications(base, override *NotificationsConfig) *NotificationsConfig {
+	out := &NotificationsConfig{}
+	if base != nil {
+		*out = *base
+	}
+	if override == nil {
+		return out
+	}
+	if override.SoundOnIdle != nil {
+		out.SoundOnIdle = override.SoundOnIdle
+	}
+	if override.SoundOnPermission != nil {
+		out.SoundOnPermission = override.SoundOnPermission
+	}
+	if override.NotifyOnIdle != nil {
+		out.NotifyOnIdle = override.NotifyOnIdle
+	}
+	if override.NotifyOnPermission != nil {
+		out.NotifyOnPermission = override.NotifyOnPermission
+	}
+	if override.NotifyOnQuestion != nil {
+		out.NotifyOnQuestion = override.NotifyOnQuestion
+	}
 	return out
 }
