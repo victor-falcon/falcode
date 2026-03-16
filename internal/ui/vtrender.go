@@ -91,6 +91,118 @@ func renderVT(vt vt10x.Terminal, cols, rows int) string {
 	return sb.String()
 }
 
+// renderVTWithScrollback renders a view that combines scrollback history with
+// the live VT screen. scrollOffset rows of scrollback are shown at the top,
+// followed by live VT rows; the last row is replaced with a scroll indicator.
+//
+// Layout (scrollOffset = S, total rows = R, scrollback len = SB):
+//
+//	Display row 0       → scrollback[SB - S]         (oldest visible scrollback)
+//	Display row S-1     → scrollback[SB - 1]          (newest scrollback row)
+//	Display row S       → live VT row 0
+//	Display row R-2     → live VT row R-2-S
+//	Display row R-1     → scroll indicator bar
+func renderVTWithScrollback(scrollback [][]vt10x.Glyph, vt vt10x.Terminal, scrollOffset, cols, rows int) string {
+	sbLen := len(scrollback)
+	// Clamp scrollOffset so we never go past the beginning of the buffer.
+	if scrollOffset > sbLen {
+		scrollOffset = sbLen
+	}
+
+	// The last row is reserved for the scroll indicator, so content rows = rows-1.
+	contentRows := rows - 1
+
+	var sb strings.Builder
+	var prevFg, prevBg vt10x.Color
+	var prevMode int16
+	resetNeeded := true
+
+	for displayRow := 0; displayRow < contentRows; displayRow++ {
+		// Which "virtual" row are we showing?
+		// virtual 0 → scrollback[sbLen - scrollOffset]
+		// virtual scrollOffset → live VT row 0
+		sbIdx := sbLen - scrollOffset + displayRow
+
+		for col := 0; col < cols; col++ {
+			var cell vt10x.Glyph
+
+			if sbIdx < 0 {
+				// Before available scrollback — blank cell.
+				cell = vt10x.Glyph{}
+			} else if sbIdx < sbLen {
+				// Scrollback row.
+				row := scrollback[sbIdx]
+				if col < len(row) {
+					cell = row[col]
+				}
+			} else {
+				// Live VT row.
+				vtRow := sbIdx - sbLen // 0-indexed VT row
+				if vtRow < rows {
+					cell = vt.Cell(col, vtRow)
+				}
+			}
+
+			if resetNeeded || cell.FG != prevFg || cell.BG != prevBg || cell.Mode != prevMode {
+				sb.WriteString("\x1b[0m")
+				if cell.BG != vt10x.DefaultBG {
+					sb.WriteString(bgEscape(cell.BG))
+				}
+				fg := cell.FG
+				if cell.Mode&vtAttrBold != 0 && fg < 8 {
+					fg += 8
+				}
+				if fg != vt10x.DefaultFG {
+					sb.WriteString(fgEscape(fg))
+				}
+				if cell.Mode&vtAttrBold != 0 {
+					sb.WriteString("\x1b[1m")
+				}
+				if cell.Mode&vtAttrItalic != 0 {
+					sb.WriteString("\x1b[3m")
+				}
+				if cell.Mode&vtAttrUnderline != 0 {
+					sb.WriteString("\x1b[4m")
+				}
+				if cell.Mode&vtAttrBlink != 0 {
+					sb.WriteString("\x1b[5m")
+				}
+				if cell.Mode&vtAttrReverse != 0 {
+					sb.WriteString("\x1b[7m")
+				}
+				prevFg = cell.FG
+				prevBg = cell.BG
+				prevMode = cell.Mode
+				resetNeeded = false
+			}
+
+			ch := cell.Char
+			if ch == 0 {
+				ch = ' '
+			}
+			sb.WriteRune(ch)
+		}
+		sb.WriteString("\x1b[0m")
+		resetNeeded = true
+		sb.WriteByte('\n')
+	}
+
+	// Last row: scroll indicator bar (reversed video).
+	label := fmt.Sprintf(" \u2191 SCROLL  \u00b7  %d rows above live  \u00b7  scroll or any key to return ", scrollOffset)
+	if len(label) > cols {
+		label = label[:cols]
+	}
+	// Pad to full width.
+	for len([]rune(label)) < cols {
+		label += " "
+	}
+	sb.WriteString("\x1b[7m") // reverse video
+	sb.WriteString(label)
+	sb.WriteString("\x1b[0m")
+
+	return sb.String()
+}
+
 func fgEscape(c vt10x.Color) string {
 	switch {
 	case c == vt10x.DefaultFG:

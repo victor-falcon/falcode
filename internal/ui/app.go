@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/hinshun/vt10x"
 	zone "github.com/lrstanley/bubblezone"
 	"github.com/victor-falcon/falcode/internal/config"
 	"github.com/victor-falcon/falcode/internal/git"
@@ -728,6 +729,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			pane.ExitScroll()
 			pane.Write([]byte("\x1b[13;2u"))
 		}
 		return m, nil
@@ -755,6 +757,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 			// Alt+Backspace → \x1b\x7f (word-delete backward, understood by
 			// readline, zsh, bash, and most shells).
 			alt := (modifier-1)&2 != 0
+			pane.ExitScroll()
 			if alt {
 				pane.Write([]byte{0x1b, 127})
 			} else {
@@ -786,6 +789,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 			// Ctrl+C → 0x03 / SIGINT) instead of the raw Kitty CSI sequence
 			// which most programs do not understand.
 			ctrl := (modifier-1)&4 != 0
+			pane.ExitScroll()
 			if ctrl && ((keycode >= 'a' && keycode <= 'z') || (keycode >= 'A' && keycode <= 'Z')) {
 				pane.Write([]byte{byte(keycode & 0x1f)})
 			} else {
@@ -917,6 +921,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if b := keyToBytes(msg); b != nil {
+			pane.ExitScroll()
 			pane.Write(b)
 		}
 	}
@@ -961,6 +966,23 @@ func (m *Model) handleLayerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ============================================================
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Wheel events on a pane without mouse tracking: use them to scroll the
+	// pane's scrollback buffer instead of forwarding to the PTY.
+	isWheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
+	if isWheel {
+		if pane := m.activePane(); pane != nil && !pane.Exited() {
+			if pane.MouseMode() == 0 && !pane.InAltScreen() {
+				const scrollStep = 3
+				if msg.Button == tea.MouseButtonWheelUp {
+					pane.Scroll(scrollStep)
+				} else {
+					pane.Scroll(-scrollStep)
+				}
+				return m, nil
+			}
+		}
+	}
+
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		// Non-left-press events: forward to PTY if they land in the pane area,
 		// then return — they are never used for falcode's own UI elements.
@@ -1013,6 +1035,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Left-click landed in the pane area — forward to the active PTY.
+	if pane := m.activePane(); pane != nil {
+		pane.ExitScroll()
+	}
 	m.forwardMouseToPTY(msg)
 
 	return m, nil
@@ -1029,6 +1054,30 @@ func (m *Model) forwardMouseToPTY(msg tea.MouseMsg) {
 	pane := m.activePane()
 	if pane == nil || pane.Exited() {
 		return
+	}
+
+	// Only forward mouse events that the child process has actually requested.
+	// falcode enables all-motion tracking on the outer terminal, but the inner
+	// child may not have enabled any mouse mode at all — blindly forwarding SGR
+	// sequences to a program that hasn't requested them causes the sequences to
+	// appear as literal text (the "weird characters" bug).
+	mouseMode := pane.MouseMode()
+	if mouseMode == 0 {
+		// Child has not enabled any mouse tracking — drop the event.
+		return
+	}
+
+	isMotion := msg.Action == tea.MouseActionMotion
+	isWheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown ||
+		msg.Button == tea.MouseButtonWheelLeft || msg.Button == tea.MouseButtonWheelRight
+
+	// ModeMouseMany (1003) is the only mode that requests all-motion events
+	// (hover without a button held). For all other modes, drop pure motion
+	// events (no button pressed, not a wheel tick).
+	if isMotion && !isWheel && msg.Button == tea.MouseButtonNone {
+		if mouseMode&vt10x.ModeMouseMany == 0 {
+			return
+		}
 	}
 
 	// Translate to pane-relative coordinates (1-indexed for SGR).
@@ -1082,8 +1131,6 @@ func (m *Model) forwardMouseToPTY(msg tea.MouseMsg) {
 
 	// Final byte: M = press or motion, m = release.
 	final := 'M'
-	isWheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown ||
-		msg.Button == tea.MouseButtonWheelLeft || msg.Button == tea.MouseButtonWheelRight
 	if msg.Action == tea.MouseActionRelease && !isWheel {
 		final = 'm'
 	}
