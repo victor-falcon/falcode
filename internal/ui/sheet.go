@@ -182,8 +182,8 @@ func overlayCentered(baseStr, overlayStr string, totalWidth, totalHeight int) st
 	return strings.Join(baseLines, "\n")
 }
 
-// overlayBottomRight composites sheetStr over baseStr at the bottom-right corner.
-// totalWidth is the full terminal width.
+// overlayBottomRight composites sheetStr over baseStr near the bottom-right
+// corner with a 1-cell right margin. totalWidth is the full terminal width.
 func overlayBottomRight(baseStr, sheetStr string, totalWidth, sheetRowOffset int) string {
 	if sheetStr == "" {
 		return baseStr
@@ -212,11 +212,11 @@ func overlayBottomRight(baseStr, sheetStr string, totalWidth, sheetRowOffset int
 		}
 
 		base := baseLines[baseRow]
-		// Truncate base line to leave room for the sheet.
-		truncated := xansi.Truncate(base, totalWidth-sheetW, "")
-		// Pad truncated to (totalWidth - sheetW) characters.
+		// Truncate base line to leave room for the sheet and its right margin.
+		truncated := xansi.Truncate(base, totalWidth-sheetW-1, "")
+		// Pad truncated to (totalWidth - sheetW - 1) characters.
 		truncW := lipgloss.Width(truncated)
-		pad := totalWidth - sheetW - truncW
+		pad := totalWidth - sheetW - 1 - truncW
 		if pad < 0 {
 			pad = 0
 		}
