@@ -106,17 +106,23 @@ func RemoveRef(repoRoot, worktreePath, branch string) error {
 // RemoveFolder removes the worktree directory from disk and cleans up the
 // now-empty parent bucket directory created by Create. This is intentionally
 // separate from RemoveRef so callers can report progress between the two steps.
-func RemoveFolder(worktreePath string) {
+func RemoveFolder(worktreePath string) error {
 	// Ensure the worktree folder is fully removed. git worktree remove --force
 	// may leave it behind when it contains untracked files not in the index.
-	os.RemoveAll(worktreePath) //nolint:errcheck
+	if err := os.RemoveAll(worktreePath); err != nil {
+		return fmt.Errorf("remove worktree folder: %w", err)
+	}
 
 	// Remove the parent directory if it is now empty (the per-repo bucket
 	// directory created by Create, e.g. ~/.falcode/worktrees/{folderName}).
 	parent := filepath.Dir(worktreePath)
 	if entries, err := os.ReadDir(parent); err == nil && len(entries) == 0 {
-		os.Remove(parent) //nolint:errcheck
+		if err := os.Remove(parent); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove worktree parent folder: %w", err)
+		}
 	}
+
+	return nil
 }
 
 // Remove is a convenience wrapper that calls RemoveRef followed by RemoveFolder.
@@ -124,8 +130,7 @@ func Remove(repoRoot, worktreePath, branch string) error {
 	if err := RemoveRef(repoRoot, worktreePath, branch); err != nil {
 		return err
 	}
-	RemoveFolder(worktreePath)
-	return nil
+	return RemoveFolder(worktreePath)
 }
 
 // Create creates a new git worktree at ~/.falcode/worktrees/{folderName}/{worktreeName}.

@@ -52,15 +52,24 @@ type WorkspaceCreateErrMsg struct{ Err error }
 // WorkspaceDirtyCheckMsg carries the result of the dirty-state check that
 // runs before showing the delete-confirmation dialog.
 type WorkspaceDirtyCheckMsg struct {
-	WS    int
+	Path  string
 	Dirty bool
 }
 
 // WorkspaceDeleteProgressMsg is dispatched as each deletion step completes.
-// Step 1 = git worktree ref removed, Step 2 = folder deleted, Step 3 = tab removed.
+// Step 1 = git worktree ref removed, Step 2 = folder deleted.
 type WorkspaceDeleteProgressMsg struct {
+	Path string
 	Step int
 	Err  error
+}
+
+type workspaceDeleteJob struct {
+	Name   string
+	Path   string
+	Branch string
+	Step   int
+	Err    error
 }
 
 // WorkspaceScriptOutputMsg carries a single line of stdout/stderr from the
@@ -138,15 +147,22 @@ type Model struct {
 	wsDeleteDirty   bool
 	wsCheckingDirty bool // true while git status is running before the modal can show the warning
 	wsDeleteTarget  int  // workspace index captured when delete was initiated
+	wsDeletePath    string
 
 	// Quit confirmation state.
 	confirmQuit bool
 
-	// Workspace deletion progress state (shown after confirmation).
-	deletingWS      bool          // deletion toast is visible
-	deleteWSStep    int           // number of completed steps: 0=none, 1=ref removed, 2=folder deleted, 3=tab removed
-	deleteWSErr     error         // error from a deletion step, if any
-	deleteWSSpinner spinner.Model // animated spinner shown in the toast and tab during deletion
+	// Workspace deletion progress state, keyed by worktree path so tabs can be
+	// removed from the UI immediately while cleanup continues in the background.
+	deleteJobs         map[string]*workspaceDeleteJob
+	deleteJobOrder     []string
+	deleteBatchTotal   int
+	deleteBatchDone    int
+	deleteBatchFailed  int
+	deleteSummaryText  string
+	deleteSummaryErr   bool
+	deleteSummaryUntil time.Time
+	deleteWSSpinner    spinner.Model
 
 	// Workspace creation loading state: true while git worktree add is running.
 	creatingWS      bool
@@ -230,11 +246,13 @@ func New(
 		tabNameInput:    ti,
 		wsNameInput:     wsName,
 		wsBranchInput:   wsBranch,
+		wsDeleteTarget:  -1,
 		currentLayer:    keybinds.Bindings,
 		layerTitle:      "falcode",
 		version:         version,
 		scheme:          scheme,
 		themeName:       themeName,
+		deleteJobs:      make(map[string]*workspaceDeleteJob),
 		deleteWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		createWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		agentStatuses:   make(map[PaneKey]AgentStatus),
@@ -421,35 +439,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsCheckingDirty = false
 		// Only update the dirty warning if the modal is still open for the
 		// same workspace — the user may have already cancelled.
-		if m.confirmDeleteWS && m.wsDeleteTarget == msg.WS {
+		if m.confirmDeleteWS && m.wsDeletePath == msg.Path {
 			m.wsDeleteDirty = msg.Dirty
 		}
 		return m, nil
 
 	case WorkspaceDeleteProgressMsg:
-		if msg.Err != nil {
-			m.deleteWSErr = msg.Err
+		job, ok := m.deleteJobs[msg.Path]
+		if !ok {
 			return m, nil
 		}
-		m.deleteWSStep = msg.Step
+		job.Step = msg.Step
+		job.Err = msg.Err
+		if msg.Err != nil {
+			m.deleteBatchFailed++
+			m.finishDeleteJob(msg.Path)
+			m.maybeFinalizeDeleteBatch()
+			return m, nil
+		}
 		switch msg.Step {
 		case 1:
-			return m, m.deleteWSFolderCmd()
+			return m, m.deleteWSFolderCmd(msg.Path)
 		case 2:
-			// Brief pause so the toast can show "Removing tab..." before it
-			// disappears along with the workspace.
-			return m, tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
-				return WorkspaceDeleteProgressMsg{Step: 3}
-			})
-		case 3:
-			m.finalizeDeleteWorkspace(m.wsDeleteTarget)
-			m.deletingWS = false
+			m.deleteBatchDone++
+			m.finishDeleteJob(msg.Path)
+			m.maybeFinalizeDeleteBatch()
 		}
 		return m, nil
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
-		if m.deletingWS {
+		if m.hasActiveDeleteJobs() {
 			m.deleteWSSpinner, cmd = m.deleteWSSpinner.Update(msg)
 			if cmd != nil {
 				return m, cmd
@@ -502,9 +522,6 @@ func (m *Model) View() string {
 	// tabSpinners maps workspace index → spinner char for any tab that should
 	// show an animated spinner in place of its × close button.
 	tabSpinners := make(map[int]string)
-	if m.deletingWS {
-		tabSpinners[m.wsDeleteTarget] = m.deleteWSSpinner.View()
-	}
 	if m.runningScript && !m.scriptDone {
 		tabSpinners[m.scriptWSIdx] = m.createWSSpinner.View()
 	}
@@ -622,9 +639,9 @@ func (m *Model) View() string {
 		view = overlayBottomRight(view, sheetStr, m.width, offset)
 	}
 
-	// Overlay the deletion toast just below the tab bar at the top-right,
-	// applied last so it stays visible regardless of which workspace is active.
-	if m.deletingWS {
+	// Overlay delete progress or the completion summary just below the tab bar at
+	// the top-right, applied last so it stays visible regardless of workspace.
+	if m.hasActiveDeleteJobs() || m.showDeleteSummary() {
 		toast := m.renderDeleteWSToast()
 		view = overlayTopRight(view, toast, m.width, TabBarHeight(m.cfg.UI)+1)
 	}
@@ -802,9 +819,8 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// If a deletion step failed, Esc dismisses the error toast.
-	if m.deletingWS && m.deleteWSErr != nil && msg.Type == tea.KeyEsc {
-		m.deletingWS = false
-		m.deleteWSErr = nil
+	if m.hasDeleteErrors() && msg.Type == tea.KeyEsc {
+		m.dismissDeleteErrors()
 		return m, nil
 	}
 
@@ -993,10 +1009,6 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Workspace (outer) tabs — close button takes priority over tab switch.
 	for i := range m.worktrees {
 		if zi := m.zm.Get(WorkspaceCloseZoneID(i)); zi != nil && zi.InBounds(msg) {
-			// Suppress the close button on tabs that currently show a spinner.
-			if m.deletingWS && i == m.wsDeleteTarget {
-				return m, nil
-			}
 			if m.runningScript && !m.scriptDone && i == m.scriptWSIdx {
 				return m, nil
 			}
@@ -1243,8 +1255,7 @@ func (m *Model) switchWorkspaceCmd(idx int) tea.Cmd {
 // deleteWorkspaceCmd runs the same guard checks as ActionDeleteWorkspace and, when
 // the workspace is deletable, triggers the dirty-check + confirmation flow.
 func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
-	if m.deletingWS {
-		m.setStatus("already deleting a workspace")
+	if wsIdx < 0 || wsIdx >= len(m.worktrees) {
 		return nil
 	}
 	if len(m.worktrees) <= 1 {
@@ -1259,6 +1270,7 @@ func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
 	// feedback. The dirty check runs concurrently in the background and
 	// updates the already-visible modal once it completes.
 	m.wsDeleteTarget = wsIdx
+	m.wsDeletePath = m.worktrees[wsIdx].Path
 	m.wsDeleteDirty = false
 	m.wsCheckingDirty = true
 	m.confirmDeleteWS = true
@@ -1380,70 +1392,52 @@ func (m *Model) closeTab(idx int) {
 	}
 }
 
-// beginDeleteWorkspaceCmd stops all panes for the given workspace and fires
-// the first async deletion step (removing the git worktree ref). The tab
-// remains visible and the progress modal is shown while work proceeds.
-func (m *Model) beginDeleteWorkspaceCmd(wsIdx int) tea.Cmd {
-	wt := m.worktrees[wsIdx]
-
-	// Signal all panes for this workspace to stop. We do NOT wait for the
-	// child processes to fully exit — git worktree remove --force and
-	// os.RemoveAll are safe to run while processes still hold open file handles
-	// on macOS/Linux, and waiting could block indefinitely if a process ignores
-	// the PTY close signal.
-	for key, p := range m.panes {
-		if key.Workspace == wsIdx {
-			p.Stop()
-		}
-	}
-
+// beginDeleteWorkspaceCmd fires the first async deletion step (removing the git
+// worktree ref) for a workspace already removed from the visible UI.
+func (m *Model) beginDeleteWorkspaceCmd(path, branch string) tea.Cmd {
 	repoRoot := m.repoRoot
-	wtPath := wt.Path
-	branch := wt.Branch
 	return func() tea.Msg {
-		err := git.RemoveRef(repoRoot, wtPath, branch)
-		return WorkspaceDeleteProgressMsg{Step: 1, Err: err}
+		err := git.RemoveRef(repoRoot, path, branch)
+		return WorkspaceDeleteProgressMsg{Path: path, Step: 1, Err: err}
 	}
 }
 
 // deleteWSFolderCmd fires the second async deletion step: wiping the worktree
 // directory (and its now-empty parent) from disk.
-func (m *Model) deleteWSFolderCmd() tea.Cmd {
-	wtPath := m.worktrees[m.wsDeleteTarget].Path
+func (m *Model) deleteWSFolderCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		git.RemoveFolder(wtPath)
-		return WorkspaceDeleteProgressMsg{Step: 2}
+		err := git.RemoveFolder(path)
+		return WorkspaceDeleteProgressMsg{Path: path, Step: 2, Err: err}
 	}
 }
 
-// finalizeDeleteWorkspace removes the workspace at wsIdx from all model slices,
-// re-indexes pane keys for workspaces that shifted down, and adjusts the active
-// indices. Must be called from the Update loop (i.e. synchronously).
-func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
-	// Clean up any remaining stopped pane entries for the deleted workspace.
-	for key := range m.panes {
+// detachWorkspace removes the workspace from the visible UI immediately,
+// re-indexes workspace-scoped state, and returns a command to ensure the new
+// active workspace has a pane when the removed workspace was focused.
+func (m *Model) detachWorkspace(wsIdx int) tea.Cmd {
+	if wsIdx < 0 || wsIdx >= len(m.worktrees) {
+		return nil
+	}
+
+	deletedActive := m.activeWS == wsIdx
+
+	for key, p := range m.panes {
 		if key.Workspace == wsIdx {
+			p.Stop()
 			delete(m.panes, key)
 		}
 	}
-	// Clean up agent status entries for the deleted workspace.
 	for key := range m.agentStatuses {
 		if key.Workspace == wsIdx {
 			delete(m.agentStatuses, key)
 		}
 	}
 
-	// Remove the workspace from all parallel slices.
 	m.worktrees = append(m.worktrees[:wsIdx], m.worktrees[wsIdx+1:]...)
 	m.extraTabs = append(m.extraTabs[:wsIdx], m.extraTabs[wsIdx+1:]...)
 	m.closedCfgTabs = append(m.closedCfgTabs[:wsIdx], m.closedCfgTabs[wsIdx+1:]...)
 	m.renamedCfgTabs = append(m.renamedCfgTabs[:wsIdx], m.renamedCfgTabs[wsIdx+1:]...)
-	if m.activeWS >= len(m.worktrees) {
-		m.activeWS = len(m.worktrees) - 1
-	}
-	m.activeInner = 0
 
-	// Re-index pane keys for workspaces that shifted down.
 	newPanes := make(map[PaneKey]*Pane, len(m.panes))
 	for key, p := range m.panes {
 		if key.Workspace > wsIdx {
@@ -1453,7 +1447,6 @@ func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
 	}
 	m.panes = newPanes
 
-	// Re-index agent status keys for workspaces that shifted down.
 	newStatuses := make(map[PaneKey]AgentStatus, len(m.agentStatuses))
 	for key, s := range m.agentStatuses {
 		if key.Workspace > wsIdx {
@@ -1462,6 +1455,160 @@ func (m *Model) finalizeDeleteWorkspace(wsIdx int) {
 		newStatuses[key] = s
 	}
 	m.agentStatuses = newStatuses
+
+	if m.runningScript {
+		switch {
+		case m.scriptWSIdx == wsIdx:
+			m.runningScript = false
+			m.scriptDone = false
+			m.scriptErr = nil
+			m.scriptOutput = nil
+			m.scriptTitle = ""
+			m.scriptWSIdx = 0
+		case m.scriptWSIdx > wsIdx:
+			m.scriptWSIdx--
+		}
+	}
+
+	if m.confirmDeleteWS {
+		switch {
+		case m.wsDeleteTarget == wsIdx:
+			m.confirmDeleteWS = false
+			m.wsDeleteTarget = -1
+			m.wsDeletePath = ""
+		case m.wsDeleteTarget > wsIdx:
+			m.wsDeleteTarget--
+		}
+	}
+
+	if m.activeWS > wsIdx {
+		m.activeWS--
+	}
+	if len(m.worktrees) == 0 {
+		m.activeWS = 0
+		m.activeInner = 0
+		return nil
+	}
+	if m.activeWS >= len(m.worktrees) {
+		m.activeWS = len(m.worktrees) - 1
+	}
+	if deletedActive {
+		m.activeInner = 0
+		return m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: 0})
+	}
+	return nil
+}
+
+func (m *Model) hasActiveDeleteJobs() bool {
+	return len(m.deleteJobOrder) > 0
+}
+
+func (m *Model) hasDeleteErrors() bool {
+	for _, path := range m.deleteJobOrder {
+		if job := m.deleteJobs[path]; job != nil && job.Err != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) dismissDeleteErrors() {
+	remaining := m.deleteJobOrder[:0]
+	for _, path := range m.deleteJobOrder {
+		job := m.deleteJobs[path]
+		if job == nil {
+			continue
+		}
+		if job.Err != nil {
+			delete(m.deleteJobs, path)
+			continue
+		}
+		remaining = append(remaining, path)
+	}
+	m.deleteJobOrder = remaining
+	if len(m.deleteJobOrder) == 0 {
+		m.deleteJobOrder = nil
+	}
+	if !m.hasActiveDeleteJobs() && m.deleteBatchTotal == 0 {
+		m.deleteJobs = make(map[string]*workspaceDeleteJob)
+	}
+}
+
+func (m *Model) finishDeleteJob(path string) {
+	delete(m.deleteJobs, path)
+	for i, p := range m.deleteJobOrder {
+		if p == path {
+			m.deleteJobOrder = append(m.deleteJobOrder[:i], m.deleteJobOrder[i+1:]...)
+			break
+		}
+	}
+	if len(m.deleteJobOrder) == 0 {
+		m.deleteJobOrder = nil
+	}
+}
+
+func (m *Model) maybeFinalizeDeleteBatch() {
+	if m.hasActiveDeleteJobs() {
+		return
+	}
+	if m.deleteBatchTotal == 0 {
+		return
+	}
+
+	failed := m.deleteBatchFailed
+	done := m.deleteBatchDone
+	total := m.deleteBatchTotal
+
+	switch {
+	case failed == 0 && done == total:
+		if total == 1 {
+			m.deleteSummaryText = "Workspace deleted."
+		} else {
+			m.deleteSummaryText = fmt.Sprintf("Deleted %d workspaces.", total)
+		}
+		m.deleteSummaryErr = false
+	case done == 0:
+		if total == 1 {
+			m.deleteSummaryText = "Workspace deletion failed."
+		} else {
+			m.deleteSummaryText = fmt.Sprintf("Failed to delete %d workspaces.", total)
+		}
+		m.deleteSummaryErr = true
+	default:
+		m.deleteSummaryText = fmt.Sprintf("Deleted %d of %d workspaces; %d failed.", done, total, failed)
+		m.deleteSummaryErr = true
+	}
+	m.deleteSummaryUntil = time.Now().Add(4 * time.Second)
+	m.deleteBatchTotal = 0
+	m.deleteBatchDone = 0
+	m.deleteBatchFailed = 0
+	m.deleteJobs = make(map[string]*workspaceDeleteJob)
+}
+
+func (m *Model) currentDeleteJob() *workspaceDeleteJob {
+	for _, path := range m.deleteJobOrder {
+		if job := m.deleteJobs[path]; job != nil && job.Err == nil {
+			return job
+		}
+	}
+	for _, path := range m.deleteJobOrder {
+		if job := m.deleteJobs[path]; job != nil {
+			return job
+		}
+	}
+	return nil
+}
+
+func (m *Model) showDeleteSummary() bool {
+	if m.deleteSummaryText == "" {
+		return false
+	}
+	if time.Now().After(m.deleteSummaryUntil) {
+		m.deleteSummaryText = ""
+		m.deleteSummaryErr = false
+		return false
+	}
+	return true
 }
 
 // restartPane stops the exited pane, removes it from the registry, and
@@ -1640,7 +1787,7 @@ func (m *Model) dirtyCheckCmd(wsIdx int) tea.Cmd {
 	wtPath := m.worktrees[wsIdx].Path
 	return func() tea.Msg {
 		dirty := git.HasUncommittedChanges(wtPath)
-		return WorkspaceDirtyCheckMsg{WS: wsIdx, Dirty: dirty}
+		return WorkspaceDirtyCheckMsg{Path: wtPath, Dirty: dirty}
 	}
 }
 
@@ -1656,14 +1803,29 @@ func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch strings.ToLower(string(msg.Runes)) {
 	case "y":
 		wsIdx := m.wsDeleteTarget
+		if wsIdx < 0 || wsIdx >= len(m.worktrees) {
+			m.confirmDeleteWS = false
+			m.wsDeletePath = ""
+			return m, nil
+		}
+		wt := m.worktrees[wsIdx]
+		job := &workspaceDeleteJob{Name: wt.Name(), Path: wt.Path, Branch: wt.Branch}
+		if m.deleteBatchTotal == 0 {
+			m.deleteBatchDone = 0
+			m.deleteBatchFailed = 0
+		}
+		m.deleteBatchTotal++
+		m.deleteJobs[job.Path] = job
+		m.deleteJobOrder = append(m.deleteJobOrder, job.Path)
 		m.confirmDeleteWS = false
-		m.deletingWS = true
-		m.deleteWSStep = 0
-		m.deleteWSErr = nil
+		m.wsDeleteTarget = -1
+		m.wsDeletePath = ""
 		m.deleteWSSpinner = spinner.New(spinner.WithSpinner(spinner.Hamburger))
-		return m, tea.Batch(m.beginDeleteWorkspaceCmd(wsIdx), m.deleteWSSpinner.Tick)
+		detachCmd := m.detachWorkspace(wsIdx)
+		return m, tea.Batch(detachCmd, m.beginDeleteWorkspaceCmd(job.Path, job.Branch), m.deleteWSSpinner.Tick)
 	case "n":
 		m.confirmDeleteWS = false
+		m.wsDeletePath = ""
 		return m, nil
 	}
 
@@ -1951,36 +2113,52 @@ func (m *Model) renderWSCreatingModal() string {
 // failure and prompts the user to press Esc to dismiss.
 func (m *Model) renderDeleteWSToast() string {
 	st := m.styles
-
-	wsName := ""
-	if wsIdx := m.wsDeleteTarget; wsIdx >= 0 && wsIdx < len(m.worktrees) {
-		wsName = m.worktrees[wsIdx].Name()
+	if !m.hasActiveDeleteJobs() {
+		if !m.showDeleteSummary() {
+			return ""
+		}
+		title := st.SheetTitle.Render("Workspace cleanup")
+		body := st.SheetDesc.Render(m.deleteSummaryText)
+		if m.deleteSummaryErr {
+			body = st.WarningMsg.Render(m.deleteSummaryText)
+		}
+		return st.SheetBox.Render(strings.Join([]string{title, body}, "\n"))
+	}
+	job := m.currentDeleteJob()
+	if job == nil {
+		return ""
 	}
 
 	// Step labels shown as the current in-progress action.
 	stepLabels := []string{
 		"Removing git worktree...",
 		"Deleting folder...",
-		"Removing tab...",
 	}
 
-	title := st.SheetTitle.Render(fmt.Sprintf("Deleting '%s' workspace.", wsName))
+	titleText := fmt.Sprintf("Deleting '%s' workspace.", job.Name)
+	if len(m.deleteJobOrder) > 1 {
+		titleText = fmt.Sprintf("Deleting %d workspaces.", len(m.deleteJobOrder))
+	}
+	title := st.SheetTitle.Render(titleText)
 
 	var stepLine string
-	if m.deleteWSErr != nil {
+	if job.Err != nil {
 		// Error state: show which step failed and the error.
 		failedLabel := ""
-		if m.deleteWSStep >= 0 && m.deleteWSStep < len(stepLabels) {
-			failedLabel = stepLabels[m.deleteWSStep]
+		if job.Step > 0 && job.Step <= len(stepLabels) {
+			failedLabel = stepLabels[job.Step-1]
 		}
 		stepLine = st.WarningMsg.Render(fmt.Sprintf("✗ %s", failedLabel)) + "\n" +
-			st.WarningMsg.Render(fmt.Sprintf("  %v", m.deleteWSErr)) + "\n" +
+			st.WarningMsg.Render(fmt.Sprintf("  %v", job.Err)) + "\n" +
 			st.SheetDesc.Render("Esc to dismiss")
 	} else {
 		spinner := m.deleteWSSpinner.View()
 		label := ""
-		if m.deleteWSStep < len(stepLabels) {
-			label = stepLabels[m.deleteWSStep]
+		if job.Step >= 0 && job.Step < len(stepLabels) {
+			label = stepLabels[job.Step]
+		}
+		if len(m.deleteJobOrder) > 1 {
+			label = fmt.Sprintf("%s (%d remaining)", label, len(m.deleteJobOrder))
 		}
 		stepLine = st.SheetDesc.Render(fmt.Sprintf("%s %s", spinner, label))
 	}
