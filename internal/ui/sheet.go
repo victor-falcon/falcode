@@ -226,8 +226,9 @@ func overlayBottomRight(baseStr, sheetStr string, totalWidth, sheetRowOffset int
 	return strings.Join(baseLines, "\n")
 }
 
-// overlayTopRight composites overlayStr over baseStr anchored at the
-// top-right corner, starting at startRow (0 = very first line).
+// overlayTopRight composites overlayStr over baseStr anchored near the
+// top-right corner with a 1-cell right margin, starting at startRow
+// (0 = very first line).
 func overlayTopRight(baseStr, overlayStr string, totalWidth, startRow int) string {
 	if overlayStr == "" {
 		return baseStr
@@ -244,7 +245,7 @@ func overlayTopRight(baseStr, overlayStr string, totalWidth, startRow int) strin
 		}
 	}
 
-	startCol := totalWidth - overlayW
+	startCol := totalWidth - overlayW - 1
 	if startCol < 0 {
 		startCol = 0
 	}
@@ -266,6 +267,13 @@ func overlayTopRight(baseStr, overlayStr string, totalWidth, startRow int) strin
 	}
 
 	return strings.Join(baseLines, "\n")
+}
+
+func overlayHeight(overlayStr string) int {
+	if overlayStr == "" {
+		return 0
+	}
+	return len(strings.Split(overlayStr, "\n"))
 }
 
 func padRight(s string, width int) string {

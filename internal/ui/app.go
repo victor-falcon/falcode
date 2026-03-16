@@ -716,15 +716,17 @@ func (m *Model) View() string {
 		view = overlayBottomRight(view, sheetStr, m.width, offset)
 	}
 
-	// Overlay delete progress or the completion summary just below the tab bar at
-	// the top-right, applied last so it stays visible regardless of workspace.
+	// Overlay progress toasts just below the tab bar at the top-right, stacking
+	// them dynamically with a single blank line between toasts when both exist.
+	toastRow := TabBarHeight(m.cfg.UI) + 1
 	if m.hasActiveDeleteJobs() || m.showDeleteSummary() {
 		toast := m.renderDeleteWSToast()
-		view = overlayTopRight(view, toast, m.width, TabBarHeight(m.cfg.UI)+1)
+		view = overlayTopRight(view, toast, m.width, toastRow)
+		toastRow += overlayHeight(toast) + 1
 	}
 	if m.hasActiveCreateJobs() || m.showCreateSummary() {
 		toast := m.renderCreateWSToast()
-		view = overlayTopRight(view, toast, m.width, TabBarHeight(m.cfg.UI)+6)
+		view = overlayTopRight(view, toast, m.width, toastRow)
 	}
 
 	// Let bubblezone scan the output to record zone positions for mouse hits.
