@@ -133,17 +133,25 @@ func Remove(repoRoot, worktreePath, branch string) error {
 	return RemoveFolder(worktreePath)
 }
 
+// PlannedPath returns the filesystem path falcode will use for a worktree.
+func PlannedPath(repoRoot, worktreeName string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+
+	folderName := filepath.Base(repoRoot)
+	return filepath.Join(home, ".falcode", "worktrees", folderName, worktreeName), nil
+}
+
 // Create creates a new git worktree at ~/.falcode/worktrees/{folderName}/{worktreeName}.
 // If branchName already exists locally it is checked out; otherwise it is created
 // from the current HEAD. Returns the newly created Worktree on success.
 func Create(repoRoot, worktreeName, branchName string) (*Worktree, error) {
-	home, err := os.UserHomeDir()
+	worktreePath, err := PlannedPath(repoRoot, worktreeName)
 	if err != nil {
-		return nil, fmt.Errorf("resolve home dir: %w", err)
+		return nil, err
 	}
-
-	folderName := filepath.Base(repoRoot)
-	worktreePath := filepath.Join(home, ".falcode", "worktrees", folderName, worktreeName)
 
 	// Ensure the parent directory exists; git worktree add creates the leaf but
 	// not intermediate directories.

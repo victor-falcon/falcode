@@ -44,10 +44,53 @@ type idleNotifyMsg struct{ key PaneKey }
 
 // WorkspaceCreatedMsg is dispatched by the background goroutine when a new
 // git worktree has been successfully created.
-type WorkspaceCreatedMsg struct{ Worktree *git.Worktree }
+type WorkspaceCreatedMsg struct {
+	JobID    string
+	Worktree *git.Worktree
+}
 
 // WorkspaceCreateErrMsg is dispatched when worktree creation fails.
-type WorkspaceCreateErrMsg struct{ Err error }
+type WorkspaceCreateErrMsg struct {
+	JobID string
+	Err   error
+}
+
+// WorkspaceScriptOutputMsg carries a single line of stdout/stderr from the
+// worktree setup script while it is running.
+type WorkspaceScriptOutputMsg struct {
+	JobID string
+	Line  string
+}
+
+// WorkspaceScriptDoneMsg is dispatched when the worktree setup script exits.
+type WorkspaceScriptDoneMsg struct {
+	JobID string
+	Err   error
+}
+
+type workspaceCreatePhase int
+
+const (
+	workspaceCreatePhasePending workspaceCreatePhase = iota
+	workspaceCreatePhaseCreating
+	workspaceCreatePhaseRunningScript
+	workspaceCreatePhaseDone
+	workspaceCreatePhaseError
+)
+
+type workspaceCreateJob struct {
+	ID           string
+	Name         string
+	Branch       string
+	Path         string
+	WorkspaceIx  int
+	Phase        workspaceCreatePhase
+	ScriptTitle  string
+	ScriptDone   bool
+	ScriptErr    error
+	ScriptOutput []string
+	Err          error
+}
 
 // WorkspaceDirtyCheckMsg carries the result of the dirty-state check that
 // runs before showing the delete-confirmation dialog.
@@ -71,13 +114,6 @@ type workspaceDeleteJob struct {
 	Step   int
 	Err    error
 }
-
-// WorkspaceScriptOutputMsg carries a single line of stdout/stderr from the
-// worktree setup script while it is running.
-type WorkspaceScriptOutputMsg struct{ Line string }
-
-// WorkspaceScriptDoneMsg is dispatched when the worktree setup script exits.
-type WorkspaceScriptDoneMsg struct{ Err error }
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -164,17 +200,17 @@ type Model struct {
 	deleteSummaryUntil time.Time
 	deleteWSSpinner    spinner.Model
 
-	// Workspace creation loading state: true while git worktree add is running.
-	creatingWS      bool
-	createWSSpinner spinner.Model // animated spinner shown in the creating-workspace modal and script output modal
-
-	// Worktree setup script execution state.
-	runningScript bool
-	scriptWSIdx   int // workspace index where the setup script is running
-	scriptDone    bool
-	scriptOutput  []string // ring-buffer of the last scriptOutputMax lines
-	scriptTitle   string   // base name of the script being run
-	scriptErr     error
+	// Workspace creation state, keyed by job id so multiple worktrees can be
+	// created in parallel while pending tabs stay visible immediately.
+	createJobs         map[string]*workspaceCreateJob
+	createJobOrder     []string
+	createBatchTotal   int
+	createBatchDone    int
+	createBatchFailed  int
+	createSummaryText  string
+	createSummaryErr   bool
+	createSummaryUntil time.Time
+	createWSSpinner    spinner.Model
 
 	// Status message displayed in the tab bar gap.
 	statusMsg     string
@@ -253,6 +289,7 @@ func New(
 		scheme:          scheme,
 		themeName:       themeName,
 		deleteJobs:      make(map[string]*workspaceDeleteJob),
+		createJobs:      make(map[string]*workspaceCreateJob),
 		deleteWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		createWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		agentStatuses:   make(map[PaneKey]AgentStatus),
@@ -396,43 +433,74 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case WorkspaceCreatedMsg:
-		// Insert the new worktree at the end and switch to it.
-		m.creatingWS = false
-		m.worktrees = append(m.worktrees, msg.Worktree)
-		m.extraTabs = append(m.extraTabs, []string{})
-		m.closedCfgTabs = append(m.closedCfgTabs, make(map[int]bool))
-		m.renamedCfgTabs = append(m.renamedCfgTabs, make(map[int]string))
-		switchCmd := m.switchWorkspaceCmd(len(m.worktrees) - 1)
+		job := m.createJobs[msg.JobID]
+		if job == nil {
+			return m, nil
+		}
+		job.Path = msg.Worktree.Path
+		if job.WorkspaceIx >= 0 && job.WorkspaceIx < len(m.worktrees) {
+			m.worktrees[job.WorkspaceIx] = msg.Worktree
+		}
 
-		// Look for a setup script inside the newly created worktree.
 		scriptPath := git.FindWorktreeScript(msg.Worktree.Path, m.cfg.GetWorktreeScripts())
 		if scriptPath == "" {
-			return m, switchCmd
+			m.createBatchDone++
+			m.finishCreateJob(msg.JobID)
+			m.maybeFinalizeCreateBatch()
+			return m, nil
 		}
-		m.runningScript = true
-		m.scriptWSIdx = len(m.worktrees) - 1
-		m.scriptDone = false
-		m.scriptOutput = nil
-		m.scriptErr = nil
-		m.scriptTitle = filepath.Base(scriptPath)
-		return m, tea.Batch(switchCmd, m.runWorktreeScriptCmd(msg.Worktree.Path, scriptPath, m.repoRoot))
+		job.Phase = workspaceCreatePhaseRunningScript
+		job.ScriptTitle = filepath.Base(scriptPath)
+		job.ScriptDone = false
+		job.ScriptOutput = nil
+		job.ScriptErr = nil
+		return m, m.runWorktreeScriptCmd(msg.JobID, msg.Worktree.Path, scriptPath, m.repoRoot)
 
 	case WorkspaceCreateErrMsg:
-		m.creatingWS = false
-		m.setStatus(fmt.Sprintf("create workspace: %v", msg.Err))
+		job := m.createJobs[msg.JobID]
+		if job == nil {
+			return m, nil
+		}
+		job.Err = msg.Err
+		job.Phase = workspaceCreatePhaseError
+		m.createBatchFailed++
+		if job.WorkspaceIx >= 0 && job.WorkspaceIx < len(m.worktrees) {
+			m.detachWorkspace(job.WorkspaceIx)
+			m.reindexCreateJobsAfterWorkspace(job.WorkspaceIx)
+		}
+		m.finishCreateJob(msg.JobID)
+		m.maybeFinalizeCreateBatch()
 		return m, nil
 
 	case WorkspaceScriptOutputMsg:
+		job := m.createJobs[msg.JobID]
+		if job == nil {
+			return m, nil
+		}
 		const scriptOutputMax = 20
-		m.scriptOutput = append(m.scriptOutput, msg.Line)
-		if len(m.scriptOutput) > scriptOutputMax {
-			m.scriptOutput = m.scriptOutput[len(m.scriptOutput)-scriptOutputMax:]
+		job.ScriptOutput = append(job.ScriptOutput, msg.Line)
+		if len(job.ScriptOutput) > scriptOutputMax {
+			job.ScriptOutput = job.ScriptOutput[len(job.ScriptOutput)-scriptOutputMax:]
 		}
 		return m, nil
 
 	case WorkspaceScriptDoneMsg:
-		m.scriptDone = true
-		m.scriptErr = msg.Err
+		job := m.createJobs[msg.JobID]
+		if job == nil {
+			return m, nil
+		}
+		job.ScriptDone = true
+		job.ScriptErr = msg.Err
+		if msg.Err != nil {
+			job.Err = msg.Err
+			job.Phase = workspaceCreatePhaseError
+			m.createBatchFailed++
+		} else {
+			job.Phase = workspaceCreatePhaseDone
+			m.createBatchDone++
+		}
+		m.finishCreateJob(msg.JobID)
+		m.maybeFinalizeCreateBatch()
 		return m, nil
 
 	case WorkspaceDirtyCheckMsg:
@@ -475,7 +543,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-		if m.creatingWS || m.runningScript {
+		if m.hasActiveCreateJobs() {
 			m.createWSSpinner, cmd = m.createWSSpinner.Update(msg)
 			if cmd != nil {
 				return m, cmd
@@ -522,8 +590,14 @@ func (m *Model) View() string {
 	// tabSpinners maps workspace index → spinner char for any tab that should
 	// show an animated spinner in place of its × close button.
 	tabSpinners := make(map[int]string)
-	if m.runningScript && !m.scriptDone {
-		tabSpinners[m.scriptWSIdx] = m.createWSSpinner.View()
+	for _, jobID := range m.createJobOrder {
+		job := m.createJobs[jobID]
+		if job == nil {
+			continue
+		}
+		if job.WorkspaceIx >= 0 && job.WorkspaceIx < len(m.worktrees) && !job.ScriptDone && job.Phase != workspaceCreatePhaseDone && job.Phase != workspaceCreatePhaseError {
+			tabSpinners[job.WorkspaceIx] = m.createWSSpinner.View()
+		}
 	}
 
 	// wsAgentStatuses maps workspace index → most urgent agent status.
@@ -554,6 +628,11 @@ func (m *Model) View() string {
 
 	paneContent := ""
 	pane := m.activePane()
+	if pane == nil {
+		if job := m.activeWorkspaceCreateJob(); job != nil && job.Phase == workspaceCreatePhaseCreating {
+			paneContent = strings.Repeat(" ", m.width)
+		}
+	}
 	isConsolePane := pane != nil && pane.IsInteractive()
 	if pane != nil {
 		paneContent = pane.View()
@@ -573,6 +652,11 @@ func (m *Model) View() string {
 	}
 
 	paneContent = strings.Join(paneLines, "\n")
+	if pane == nil {
+		if job := m.activeWorkspaceCreateJob(); job != nil && job.Phase == workspaceCreatePhaseCreating {
+			paneContent = m.renderPendingWorkspacePane(job)
+		}
+	}
 
 	// Overlay a restart banner centered over the pane area when a
 	// non-interactive (command) pane has stopped. This is done before joining
@@ -610,16 +694,9 @@ func (m *Model) View() string {
 		paneContent = overlayCentered(paneContent, dialog, m.width, m.paneHeight())
 	}
 
-	// Overlay a loading indicator while the git worktree is being created.
-	if m.creatingWS {
-		loading := m.renderWSCreatingModal()
-		paneContent = overlayCentered(paneContent, loading, m.width, m.paneHeight())
-	}
-
-	// Overlay the script output modal only on the workspace where the script
-	// is running; other workspaces remain fully usable in the meantime.
-	if m.runningScript && m.activeWS == m.scriptWSIdx {
-		scriptModal := m.renderScriptOutputModal()
+	// Overlay the active create job's script output only on that workspace.
+	if scriptJob := m.scriptModalJob(); scriptJob != nil && m.activeWS == scriptJob.WorkspaceIx {
+		scriptModal := m.renderScriptOutputModal(scriptJob)
 		paneContent = overlayCentered(paneContent, scriptModal, m.width, m.paneHeight())
 	}
 
@@ -644,6 +721,10 @@ func (m *Model) View() string {
 	if m.hasActiveDeleteJobs() || m.showDeleteSummary() {
 		toast := m.renderDeleteWSToast()
 		view = overlayTopRight(view, toast, m.width, TabBarHeight(m.cfg.UI)+1)
+	}
+	if m.hasActiveCreateJobs() || m.showCreateSummary() {
+		toast := m.renderCreateWSToast()
+		view = overlayTopRight(view, toast, m.width, TabBarHeight(m.cfg.UI)+6)
 	}
 
 	// Let bubblezone scan the output to record zone positions for mouse hits.
@@ -682,7 +763,7 @@ func (m *Model) handleUnknownMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Not a Kitty sequence — forward raw bytes to the active PTY, but never
 	// while a modal or prefix mode is consuming input.
-	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+	if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.blocksActiveWorkspaceInput() {
 		return m, nil
 	}
 	if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -742,7 +823,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		// opencode's key parser handles this format: charCode=13, modifier=2
 		// (modifier_bits=1, bit0=shift) → {name:"return", shift:true}.
 		// Block while a modal is open.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.blocksActiveWorkspaceInput() {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -767,7 +848,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 		// Modified backspace (e.g. Alt+Backspace) — forward to PTY with the
 		// correct byte sequence. Block while a modal is consuming input.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.blocksActiveWorkspaceInput() {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -797,7 +878,7 @@ func (m *Model) handleKittyKey(keycode, modifier int, raw []byte) (tea.Model, te
 		}
 
 		// Unknown key — forward raw to PTY when not in a modal.
-		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.creatingWS || (m.runningScript && m.activeWS == m.scriptWSIdx) {
+		if m.namingWS || m.namingTab || m.renamingTab || m.confirmDeleteWS || m.confirmQuit || m.prefixMode || m.blocksActiveWorkspaceInput() {
 			return m, nil
 		}
 		if pane := m.activePane(); pane != nil && !pane.Exited() {
@@ -843,29 +924,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLayerKey(msg)
 	}
 
-	// While the worktree is being created, swallow all keys.
-	if m.creatingWS {
+	if m.dismissScriptModalForActiveWorkspace() {
 		return m, nil
 	}
-
-	// While the setup script is running, block input on the script's workspace.
-	// When the script finishes, any key on that workspace dismisses the modal.
-	// On other workspaces, let keys flow through normally.
-	if m.runningScript {
-		if m.scriptDone {
-			m.runningScript = false
-			if m.activeWS == m.scriptWSIdx {
-				// Swallow the key that dismissed the "Done" modal.
-				return m, nil
-			}
-			// On a different workspace: clean up silently, fall through to
-			// normal key handling below.
-		} else if m.activeWS == m.scriptWSIdx {
-			// Script still running on this workspace — block all keys.
-			return m, nil
-		}
-		// Script still running but user is on a different workspace — let keys
-		// flow through normally.
+	if m.blocksActiveWorkspaceInput() {
+		return m, nil
 	}
 
 	// Workspace naming prompt intercepts all keys (highest priority).
@@ -1009,7 +1072,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Workspace (outer) tabs — close button takes priority over tab switch.
 	for i := range m.worktrees {
 		if zi := m.zm.Get(WorkspaceCloseZoneID(i)); zi != nil && zi.InBounds(msg) {
-			if m.runningScript && !m.scriptDone && i == m.scriptWSIdx {
+			if m.workspaceHasActiveCreateJob(i) {
 				return m, nil
 			}
 			return m, m.deleteWorkspaceCmd(i)
@@ -1456,19 +1519,7 @@ func (m *Model) detachWorkspace(wsIdx int) tea.Cmd {
 	}
 	m.agentStatuses = newStatuses
 
-	if m.runningScript {
-		switch {
-		case m.scriptWSIdx == wsIdx:
-			m.runningScript = false
-			m.scriptDone = false
-			m.scriptErr = nil
-			m.scriptOutput = nil
-			m.scriptTitle = ""
-			m.scriptWSIdx = 0
-		case m.scriptWSIdx > wsIdx:
-			m.scriptWSIdx--
-		}
-	}
+	m.reindexCreateJobsAfterWorkspace(wsIdx)
 
 	if m.confirmDeleteWS {
 		switch {
@@ -1497,6 +1548,118 @@ func (m *Model) detachWorkspace(wsIdx int) tea.Cmd {
 		return m.ensurePaneCmd(PaneKey{Workspace: m.activeWS, Tab: 0})
 	}
 	return nil
+}
+
+func (m *Model) hasActiveCreateJobs() bool {
+	return len(m.createJobOrder) > 0
+}
+
+func (m *Model) finishCreateJob(jobID string) {
+	delete(m.createJobs, jobID)
+	for i, id := range m.createJobOrder {
+		if id == jobID {
+			m.createJobOrder = append(m.createJobOrder[:i], m.createJobOrder[i+1:]...)
+			break
+		}
+	}
+	if len(m.createJobOrder) == 0 {
+		m.createJobOrder = nil
+	}
+}
+
+func (m *Model) maybeFinalizeCreateBatch() {
+	if m.hasActiveCreateJobs() {
+		return
+	}
+	if m.createBatchTotal == 0 {
+		return
+	}
+
+	failed := m.createBatchFailed
+	done := m.createBatchDone
+	total := m.createBatchTotal
+
+	switch {
+	case failed == 0 && done == total:
+		if total == 1 {
+			m.createSummaryText = "Workspace created."
+		} else {
+			m.createSummaryText = fmt.Sprintf("Created %d workspaces.", total)
+		}
+		m.createSummaryErr = false
+	case done == 0:
+		if total == 1 {
+			m.createSummaryText = "Workspace creation failed."
+		} else {
+			m.createSummaryText = fmt.Sprintf("Failed to create %d workspaces.", total)
+		}
+		m.createSummaryErr = true
+	default:
+		m.createSummaryText = fmt.Sprintf("Created %d of %d workspaces; %d failed.", done, total, failed)
+		m.createSummaryErr = true
+	}
+	m.createSummaryUntil = time.Now().Add(4 * time.Second)
+	m.createBatchTotal = 0
+	m.createBatchDone = 0
+	m.createBatchFailed = 0
+	m.createJobs = make(map[string]*workspaceCreateJob)
+}
+
+func (m *Model) currentCreateJob() *workspaceCreateJob {
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil && job.Err == nil {
+			return job
+		}
+	}
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil {
+			return job
+		}
+	}
+	return nil
+}
+
+func (m *Model) scriptModalJob() *workspaceCreateJob {
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil {
+			if job.Phase == workspaceCreatePhaseRunningScript || (job.ScriptDone && job.WorkspaceIx == m.activeWS) {
+				return job
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Model) showCreateSummary() bool {
+	if m.createSummaryText == "" {
+		return false
+	}
+	if time.Now().After(m.createSummaryUntil) {
+		m.createSummaryText = ""
+		m.createSummaryErr = false
+		return false
+	}
+	return true
+}
+
+func (m *Model) pendingWorkspaceName(wsIdx int) string {
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil && job.WorkspaceIx == wsIdx {
+			return job.Name
+		}
+	}
+	return ""
+}
+
+func (m *Model) reindexCreateJobsAfterWorkspace(wsIdx int) {
+	for _, job := range m.createJobs {
+		if job == nil {
+			continue
+		}
+		if job.WorkspaceIx > wsIdx {
+			job.WorkspaceIx--
+		}
+	}
 }
 
 func (m *Model) hasActiveDeleteJobs() bool {
@@ -1597,6 +1760,84 @@ func (m *Model) currentDeleteJob() *workspaceDeleteJob {
 		}
 	}
 	return nil
+}
+
+func (m *Model) workspaceHasActiveCreateJob(wsIdx int) bool {
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil && job.WorkspaceIx == wsIdx {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) activeWorkspaceCreateJob() *workspaceCreateJob {
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil && job.WorkspaceIx == m.activeWS {
+			return job
+		}
+	}
+	return nil
+}
+
+func (m *Model) workspaceCreateJobByIndex(wsIdx int) *workspaceCreateJob {
+	for _, jobID := range m.createJobOrder {
+		if job := m.createJobs[jobID]; job != nil && job.WorkspaceIx == wsIdx {
+			return job
+		}
+	}
+	return nil
+}
+
+func (m *Model) blocksActiveWorkspaceInput() bool {
+	job := m.activeWorkspaceCreateJob()
+	if job == nil {
+		return false
+	}
+	return job.Phase == workspaceCreatePhaseCreating || job.Phase == workspaceCreatePhaseRunningScript
+}
+
+func (m *Model) dismissScriptModalForActiveWorkspace() bool {
+	job := m.activeWorkspaceCreateJob()
+	if job == nil || !job.ScriptDone {
+		return false
+	}
+	if job.Err != nil {
+		m.setStatus(fmt.Sprintf("create workspace: %v", job.Err))
+	}
+	return true
+}
+
+func (m *Model) beginCreateWorkspace(worktreeName, branchName string) tea.Cmd {
+	path, err := git.PlannedPath(m.repoRoot, worktreeName)
+	if err != nil {
+		m.setStatus(fmt.Sprintf("create workspace: %v", err))
+		return nil
+	}
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+	job := &workspaceCreateJob{
+		ID:          jobID,
+		Name:        worktreeName,
+		Branch:      branchName,
+		Path:        path,
+		WorkspaceIx: len(m.worktrees),
+		Phase:       workspaceCreatePhaseCreating,
+	}
+	if m.createBatchTotal == 0 {
+		m.createBatchDone = 0
+		m.createBatchFailed = 0
+	}
+	m.createBatchTotal++
+	m.createJobs[jobID] = job
+	m.createJobOrder = append(m.createJobOrder, jobID)
+	m.worktrees = append(m.worktrees, &git.Worktree{Path: path, Branch: worktreeName + "...", IsMain: false})
+	m.extraTabs = append(m.extraTabs, []string{})
+	m.closedCfgTabs = append(m.closedCfgTabs, make(map[int]bool))
+	m.renamedCfgTabs = append(m.renamedCfgTabs, make(map[int]string))
+	m.activeWS = job.WorkspaceIx
+	m.activeInner = 0
+	m.createWSSpinner = spinner.New(spinner.WithSpinner(spinner.Hamburger))
+	return tea.Batch(m.createWorkspaceCmd(jobID, worktreeName, branchName), m.createWSSpinner.Tick)
 }
 
 func (m *Model) showDeleteSummary() bool {
@@ -1700,11 +1941,9 @@ func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		branchName := m.wsPendingName
 		m.namingWS = false
-		m.creatingWS = true
 		m.wsNameInput.Blur()
 		m.wsBranchInput.Blur()
-		m.createWSSpinner = spinner.New(spinner.WithSpinner(spinner.Hamburger))
-		return m, tea.Batch(m.createWorkspaceCmd(wsName, branchName), m.createWSSpinner.Tick)
+		return m, m.beginCreateWorkspace(wsName, branchName)
 	}
 
 	// Forward keystrokes to the active input.
@@ -1719,14 +1958,14 @@ func (m *Model) handleWSNamingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // createWorkspaceCmd runs git worktree creation in the background and
 // dispatches WorkspaceCreatedMsg or WorkspaceCreateErrMsg when done.
-func (m *Model) createWorkspaceCmd(worktreeName, branchName string) tea.Cmd {
+func (m *Model) createWorkspaceCmd(jobID, worktreeName, branchName string) tea.Cmd {
 	repoRoot := m.repoRoot
 	return func() tea.Msg {
 		wt, err := git.Create(repoRoot, worktreeName, branchName)
 		if err != nil {
-			return WorkspaceCreateErrMsg{Err: err}
+			return WorkspaceCreateErrMsg{JobID: jobID, Err: err}
 		}
-		return WorkspaceCreatedMsg{Worktree: wt}
+		return WorkspaceCreatedMsg{JobID: jobID, Worktree: wt}
 	}
 }
 
@@ -1734,7 +1973,7 @@ func (m *Model) createWorkspaceCmd(worktreeName, branchName string) tea.Cmd {
 // shell script with repoRoot passed as $1. stdout and stderr are merged and
 // streamed line-by-line via WorkspaceScriptOutputMsg. When the process exits,
 // WorkspaceScriptDoneMsg is dispatched.
-func (m *Model) runWorktreeScriptCmd(worktreePath, scriptPath, repoRoot string) tea.Cmd {
+func (m *Model) runWorktreeScriptCmd(jobID, worktreePath, scriptPath, repoRoot string) tea.Cmd {
 	send := m.send
 	return func() tea.Msg {
 		sh := os.Getenv("SHELL")
@@ -1752,7 +1991,7 @@ func (m *Model) runWorktreeScriptCmd(worktreePath, scriptPath, repoRoot string) 
 		if err := cmd.Start(); err != nil {
 			pw.Close()
 			pr.Close()
-			return WorkspaceScriptDoneMsg{Err: fmt.Errorf("start script: %w", err)}
+			return WorkspaceScriptDoneMsg{JobID: jobID, Err: fmt.Errorf("start script: %w", err)}
 		}
 
 		// Wait for the process in a goroutine so we can stream output
@@ -1767,12 +2006,12 @@ func (m *Model) runWorktreeScriptCmd(worktreePath, scriptPath, repoRoot string) 
 
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
-			send(WorkspaceScriptOutputMsg{Line: scanner.Text()})
+			send(WorkspaceScriptOutputMsg{JobID: jobID, Line: scanner.Text()})
 		}
 		pr.Close()
 		<-waitDone
 
-		return WorkspaceScriptDoneMsg{Err: waitErr}
+		return WorkspaceScriptDoneMsg{JobID: jobID, Err: waitErr}
 	}
 }
 
@@ -1910,6 +2149,12 @@ func (m *Model) wsAgentStatus(wsIdx int) AgentStatus {
 }
 
 func (m *Model) activePane() *Pane {
+	if m.activeWS < 0 || m.activeWS >= len(m.worktrees) {
+		return nil
+	}
+	if job := m.activeWorkspaceCreateJob(); job != nil && job.Phase == workspaceCreatePhaseCreating {
+		return nil
+	}
 	return m.panes[PaneKey{Workspace: m.activeWS, Tab: m.activeInner}]
 }
 
@@ -1920,6 +2165,9 @@ func (m *Model) ensurePaneCmd(key PaneKey) tea.Cmd {
 	}
 	tab := m.tabForKey(key)
 	if tab == nil {
+		return nil
+	}
+	if job := m.workspaceCreateJobByIndex(key.Workspace); job != nil && job.Phase == workspaceCreatePhaseCreating {
 		return nil
 	}
 	wt := m.worktrees[key.Workspace]
@@ -1955,6 +2203,9 @@ func (m *Model) ensurePaneStarted(key PaneKey) {
 	}
 	tab := m.tabForKey(key)
 	if tab == nil {
+		return
+	}
+	if job := m.workspaceCreateJobByIndex(key.Workspace); job != nil && job.Phase == workspaceCreatePhaseCreating {
 		return
 	}
 	wt := m.worktrees[key.Workspace]
@@ -2053,6 +2304,15 @@ func (m *Model) renderWSNamePrompt() string {
 	sep := st.SheetSep.Render(strings.Repeat("─", 28))
 	content := strings.Join([]string{title, sep, inputView}, "\n")
 	return st.SheetBox.Render(content)
+}
+
+func (m *Model) renderPendingWorkspacePane(job *workspaceCreateJob) string {
+	st := m.styles
+	title := st.SheetTitle.Render(fmt.Sprintf("Creating '%s'", job.Name))
+	sep := st.SheetSep.Render(strings.Repeat("─", 28))
+	body := st.SheetDesc.Render(m.createWSSpinner.View() + "Setting up git worktree…")
+	content := strings.Join([]string{title, sep, body}, "\n")
+	return overlayCentered(strings.Repeat(" \n", m.paneHeight()-1)+" ", st.SheetBox.Render(content), m.width, m.paneHeight())
 }
 
 func (m *Model) renderDeleteWSConfirm() string {
@@ -2167,11 +2427,44 @@ func (m *Model) renderDeleteWSToast() string {
 	return st.SheetBox.Render(content)
 }
 
+func (m *Model) renderCreateWSToast() string {
+	st := m.styles
+	if !m.hasActiveCreateJobs() {
+		if !m.showCreateSummary() {
+			return ""
+		}
+		title := st.SheetTitle.Render("Workspace creation")
+		body := st.SheetDesc.Render(m.createSummaryText)
+		if m.createSummaryErr {
+			body = st.WarningMsg.Render(m.createSummaryText)
+		}
+		return st.SheetBox.Render(strings.Join([]string{title, body}, "\n"))
+	}
+	job := m.currentCreateJob()
+	if job == nil {
+		return ""
+	}
+	step := "Creating git worktree..."
+	if job.Phase == workspaceCreatePhaseRunningScript {
+		step = fmt.Sprintf("Running %s...", job.ScriptTitle)
+	}
+	titleText := fmt.Sprintf("Creating '%s' workspace.", job.Name)
+	if len(m.createJobOrder) > 1 {
+		titleText = fmt.Sprintf("Creating %d workspaces.", len(m.createJobOrder))
+	}
+	title := st.SheetTitle.Render(titleText)
+	body := st.SheetDesc.Render(fmt.Sprintf("%s %s", m.createWSSpinner.View(), step))
+	if len(m.createJobOrder) > 1 {
+		body = st.SheetDesc.Render(fmt.Sprintf("%s %s (%d remaining)", m.createWSSpinner.View(), step, len(m.createJobOrder)))
+	}
+	return st.SheetBox.Render(strings.Join([]string{title, body}, "\n"))
+}
+
 // renderScriptOutputModal renders the setup script output overlay. It shows
 // the last scriptOutputMax lines streamed from the script's stdout/stderr,
 // plus a status line indicating whether the script is still running or has
 // finished. When done the user dismisses it with any key.
-func (m *Model) renderScriptOutputModal() string {
+func (m *Model) renderScriptOutputModal(job *workspaceCreateJob) string {
 	// Fill most of the terminal width; leave a small margin for the box border.
 	innerWidth := m.width - 10
 	if innerWidth < 60 {
@@ -2182,13 +2475,13 @@ func (m *Model) renderScriptOutputModal() string {
 	}
 
 	st := m.styles
-	title := st.SheetTitle.Render(fmt.Sprintf("Running %s", m.scriptTitle))
+	title := st.SheetTitle.Render(fmt.Sprintf("Running %s", job.ScriptTitle))
 	sep := st.SheetSep.Render(strings.Repeat("─", innerWidth))
 
 	var lines []string
 	lines = append(lines, title, sep)
 
-	for _, line := range m.scriptOutput {
+	for _, line := range job.ScriptOutput {
 		// Truncate lines that exceed the inner width.
 		r := []rune(line)
 		if len(r) > innerWidth {
@@ -2201,10 +2494,10 @@ func (m *Model) renderScriptOutputModal() string {
 	lines = append(lines, st.SheetSep.Render(strings.Repeat("─", innerWidth)))
 	var statusLine string
 	switch {
-	case !m.scriptDone:
+	case !job.ScriptDone:
 		statusLine = st.SheetDesc.Render(m.createWSSpinner.View() + "running…")
-	case m.scriptErr != nil:
-		errText := st.WarningMsg.Render(fmt.Sprintf("Error: %v", m.scriptErr))
+	case job.ScriptErr != nil:
+		errText := st.WarningMsg.Render(fmt.Sprintf("Error: %v", job.ScriptErr))
 		statusLine = errText + st.SheetDesc.Render("  ·  press any key")
 	default:
 		statusLine = st.SheetDesc.Render("Done  ·  press any key to dismiss")
