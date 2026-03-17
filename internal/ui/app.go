@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1048,6 +1049,13 @@ func (m *Model) handleLayerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ============================================================
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	pane := m.activePane()
+	if pane != nil && !pane.Exited() && pane.MouseMode() == 0 {
+		if handled := m.handleSelectionMouse(pane, msg); handled {
+			return m, nil
+		}
+	}
+
 	// Wheel events on a pane without mouse tracking: use them to scroll the
 	// pane's scrollback buffer instead of forwarding to the PTY.
 	isWheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
@@ -1119,6 +1127,95 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	m.forwardMouseToPTY(msg)
 
 	return m, nil
+}
+
+func (m *Model) handleSelectionMouse(pane *Pane, msg tea.MouseMsg) bool {
+	row, col, inPane := m.mousePaneCoords(msg)
+
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if msg.Button != tea.MouseButtonLeft || !inPane {
+			pane.ClearSelection()
+			return false
+		}
+		pane.StartSelection(row, col)
+		return true
+	case tea.MouseActionMotion:
+		if msg.Button != tea.MouseButtonLeft && msg.Button != tea.MouseButtonNone {
+			return false
+		}
+		if !pane.Selecting() {
+			return false
+		}
+		m.extendSelectionWithAutoScroll(pane, row, col, inPane)
+		return true
+	case tea.MouseActionRelease:
+		if (msg.Button != tea.MouseButtonLeft && msg.Button != tea.MouseButtonNone) || !pane.Selecting() {
+			return false
+		}
+		selected := pane.EndSelection(row, col)
+		if strings.TrimSpace(selected) == "" {
+			pane.ClearSelection()
+			return true
+		}
+		if err := clipboard.WriteAll(selected); err != nil {
+			m.setStatus(fmt.Sprintf("copy selection: %v", err))
+			return true
+		}
+		pane.ClearSelection()
+		m.setStatus("copied selection")
+		return true
+	default:
+		if pane.Selecting() {
+			pane.ClearSelection()
+		}
+		return false
+	}
+}
+
+func (m *Model) extendSelectionWithAutoScroll(pane *Pane, row, col int, inPane bool) {
+	tabH := TabBarHeight(m.cfg.UI)
+	paneRows := m.height - tabH
+	if paneRows <= 0 {
+		return
+	}
+
+	if !inPane {
+		if col < 0 {
+			col = 0
+		}
+		if col >= m.width {
+			col = m.width - 1
+		}
+	}
+
+	if row < 0 {
+		pane.Scroll(1)
+		row = 0
+		inPane = true
+	} else if row >= paneRows {
+		pane.Scroll(-1)
+		row = paneRows - 1
+		inPane = true
+	}
+
+	if inPane {
+		pane.UpdateSelection(row, col)
+	}
+}
+
+func (m *Model) mousePaneCoords(msg tea.MouseMsg) (row, col int, inPane bool) {
+	tabH := TabBarHeight(m.cfg.UI)
+	row = msg.Y - tabH
+	col = msg.X
+	if row < 0 || col < 0 || col >= m.width {
+		return row, col, false
+	}
+	paneRows := m.height - tabH
+	if row >= paneRows {
+		return row, col, false
+	}
+	return row, col, true
 }
 
 // forwardMouseToPTY converts a tea.MouseMsg into an SGR mouse escape sequence

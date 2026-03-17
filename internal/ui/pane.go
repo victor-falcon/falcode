@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/bubbletea"
@@ -27,6 +28,37 @@ type PaneOutputMsg struct{ Key PaneKey }
 type PaneExitMsg struct {
 	Key PaneKey
 	Err error
+}
+
+type selectionCell struct {
+	Row int
+	Col int
+}
+
+type SelectionRange struct {
+	Start selectionCell
+	End   selectionCell
+}
+
+func (r SelectionRange) Contains(row, col int) bool {
+	cell := selectionCell{Row: row, Col: col}
+	return compareSelectionCell(r.Start, cell) <= 0 && compareSelectionCell(cell, r.End) <= 0
+}
+
+func compareSelectionCell(a, b selectionCell) int {
+	if a.Row < b.Row {
+		return -1
+	}
+	if a.Row > b.Row {
+		return 1
+	}
+	if a.Col < b.Col {
+		return -1
+	}
+	if a.Col > b.Col {
+		return 1
+	}
+	return 0
 }
 
 // Pane manages a single PTY process and its VT100 terminal emulator.
@@ -58,6 +90,10 @@ type Pane struct {
 	// goroutine drains it and calls send(PaneOutputMsg{}) so that the read
 	// loop never blocks on bubbletea's message channel.
 	notify chan struct{}
+
+	selStart  *selectionCell
+	selEnd    *selectionCell
+	selecting bool
 }
 
 // NewPane creates a Pane but does not start it yet.
@@ -243,10 +279,177 @@ func (p *Pane) View() string {
 		return ""
 	}
 
+	sel := p.selectionRangeLocked()
 	if p.scrollOffset > 0 {
-		return renderVTWithScrollback(p.scrollback, p.vt, p.scrollOffset, p.cols, p.rows)
+		return renderVTWithScrollback(p.scrollback, p.vt, p.scrollOffset, p.cols, p.rows, sel)
 	}
-	return renderVT(p.vt, p.cols, p.rows)
+	return renderVT(p.vt, p.cols, p.rows, sel)
+}
+
+func (p *Pane) StartSelection(row, col int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cell, ok := p.selectionCellFromDisplayLocked(row, col)
+	if !ok {
+		p.clearSelectionLocked()
+		return
+	}
+	p.selStart = &cell
+	p.selEnd = &cell
+	p.selecting = true
+}
+
+func (p *Pane) UpdateSelection(row, col int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.selecting || p.selStart == nil {
+		return
+	}
+	cell, ok := p.selectionCellFromDisplayLocked(row, col)
+	if !ok {
+		return
+	}
+	p.selEnd = &cell
+}
+
+func (p *Pane) EndSelection(row, col int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.selecting || p.selStart == nil {
+		return ""
+	}
+	if cell, ok := p.selectionCellFromDisplayLocked(row, col); ok {
+		p.selEnd = &cell
+	}
+	p.selecting = false
+	return p.selectedTextLocked()
+}
+
+func (p *Pane) ClearSelection() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.clearSelectionLocked()
+}
+
+func (p *Pane) Selecting() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.selecting
+}
+
+func (p *Pane) selectionRangeLocked() *SelectionRange {
+	if p.selStart == nil || p.selEnd == nil {
+		return nil
+	}
+	start := *p.selStart
+	end := *p.selEnd
+	if compareSelectionCell(start, end) > 0 {
+		start, end = end, start
+	}
+	sel := SelectionRange{Start: start, End: end}
+	return &sel
+}
+
+func (p *Pane) selectedTextLocked() string {
+	sel := p.selectionRangeLocked()
+	if sel == nil {
+		return ""
+	}
+
+	lines := make([]string, 0, sel.End.Row-sel.Start.Row+1)
+	for row := sel.Start.Row; row <= sel.End.Row; row++ {
+		startCol := 0
+		endCol := p.cols - 1
+		if row == sel.Start.Row {
+			startCol = sel.Start.Col
+		}
+		if row == sel.End.Row {
+			endCol = sel.End.Col
+		}
+		if startCol > endCol {
+			startCol, endCol = endCol, startCol
+		}
+
+		var sb strings.Builder
+		for col := startCol; col <= endCol; col++ {
+			cell, ok := p.virtualCellLocked(row, col)
+			if !ok {
+				continue
+			}
+			ch := cell.Char
+			if ch == 0 {
+				ch = ' '
+			}
+			sb.WriteRune(ch)
+		}
+		lines = append(lines, strings.TrimRight(sb.String(), " "))
+	}
+
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
+func (p *Pane) virtualCellLocked(row, col int) (vt10x.Glyph, bool) {
+	if p.vt == nil || col < 0 || col >= p.cols || row < 0 {
+		return vt10x.Glyph{}, false
+	}
+	sbLen := len(p.scrollback)
+	if row < sbLen {
+		sbRow := p.scrollback[row]
+		if col < len(sbRow) {
+			return sbRow[col], true
+		}
+		return vt10x.Glyph{}, true
+	}
+
+	vtRow := row - sbLen
+	if vtRow < 0 || vtRow >= p.rows {
+		return vt10x.Glyph{}, false
+	}
+	return p.vt.Cell(col, vtRow), true
+}
+
+func (p *Pane) selectionCellFromDisplayLocked(row, col int) (selectionCell, bool) {
+	if p.cols <= 0 || p.rows <= 0 {
+		return selectionCell{}, false
+	}
+	maxRow := p.rows - 1
+	if p.scrollOffset > 0 && maxRow > 0 {
+		maxRow--
+	}
+	if maxRow < 0 {
+		return selectionCell{}, false
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row > maxRow {
+		row = maxRow
+	}
+	if col < 0 {
+		col = 0
+	}
+	if col >= p.cols {
+		col = p.cols - 1
+	}
+	return selectionCell{Row: p.displayRowToVirtualLocked(row), Col: col}, true
+}
+
+func (p *Pane) displayRowToVirtualLocked(row int) int {
+	scrollOffset := p.scrollOffset
+	sbLen := len(p.scrollback)
+	if scrollOffset > sbLen {
+		scrollOffset = sbLen
+	}
+	return sbLen - scrollOffset + row
+}
+
+func (p *Pane) clearSelectionLocked() {
+	p.selStart = nil
+	p.selEnd = nil
+	p.selecting = false
 }
 
 // ============================================================

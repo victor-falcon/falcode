@@ -21,7 +21,7 @@ const (
 // XOR-toggled on the cursor cell, making it always visually distinct.
 // This is necessary because bubbletea repositions the terminal hardware cursor
 // to the bottom of the screen after every frame, so we cannot rely on it.
-func renderVT(vt vt10x.Terminal, cols, rows int) string {
+func renderVT(vt vt10x.Terminal, cols, rows int, sel *SelectionRange) string {
 	cur := vt.Cursor()
 	curVisible := vt.CursorVisible()
 
@@ -38,6 +38,9 @@ func renderVT(vt vt10x.Terminal, cols, rows int) string {
 			// block cursor that is always visible regardless of cell content.
 			mode := cell.Mode
 			if curVisible && col == cur.X && row == cur.Y {
+				mode ^= vtAttrReverse
+			}
+			if sel != nil && sel.Contains(row, col) {
 				mode ^= vtAttrReverse
 			}
 
@@ -102,7 +105,7 @@ func renderVT(vt vt10x.Terminal, cols, rows int) string {
 //	Display row S       → live VT row 0
 //	Display row R-2     → live VT row R-2-S
 //	Display row R-1     → scroll indicator bar
-func renderVTWithScrollback(scrollback [][]vt10x.Glyph, vt vt10x.Terminal, scrollOffset, cols, rows int) string {
+func renderVTWithScrollback(scrollback [][]vt10x.Glyph, vt vt10x.Terminal, scrollOffset, cols, rows int, sel *SelectionRange) string {
 	sbLen := len(scrollback)
 	// Clamp scrollOffset so we never go past the beginning of the buffer.
 	if scrollOffset > sbLen {
@@ -143,36 +146,42 @@ func renderVTWithScrollback(scrollback [][]vt10x.Glyph, vt vt10x.Terminal, scrol
 				}
 			}
 
-			if resetNeeded || cell.FG != prevFg || cell.BG != prevBg || cell.Mode != prevMode {
+			mode := cell.Mode
+			virtualRow := sbLen - scrollOffset + displayRow
+			if sel != nil && sel.Contains(virtualRow, col) {
+				mode ^= vtAttrReverse
+			}
+
+			if resetNeeded || cell.FG != prevFg || cell.BG != prevBg || mode != prevMode {
 				sb.WriteString("\x1b[0m")
 				if cell.BG != vt10x.DefaultBG {
 					sb.WriteString(bgEscape(cell.BG))
 				}
 				fg := cell.FG
-				if cell.Mode&vtAttrBold != 0 && fg < 8 {
+				if mode&vtAttrBold != 0 && fg < 8 {
 					fg += 8
 				}
 				if fg != vt10x.DefaultFG {
 					sb.WriteString(fgEscape(fg))
 				}
-				if cell.Mode&vtAttrBold != 0 {
+				if mode&vtAttrBold != 0 {
 					sb.WriteString("\x1b[1m")
 				}
-				if cell.Mode&vtAttrItalic != 0 {
+				if mode&vtAttrItalic != 0 {
 					sb.WriteString("\x1b[3m")
 				}
-				if cell.Mode&vtAttrUnderline != 0 {
+				if mode&vtAttrUnderline != 0 {
 					sb.WriteString("\x1b[4m")
 				}
-				if cell.Mode&vtAttrBlink != 0 {
+				if mode&vtAttrBlink != 0 {
 					sb.WriteString("\x1b[5m")
 				}
-				if cell.Mode&vtAttrReverse != 0 {
+				if mode&vtAttrReverse != 0 {
 					sb.WriteString("\x1b[7m")
 				}
 				prevFg = cell.FG
 				prevBg = cell.BG
-				prevMode = cell.Mode
+				prevMode = mode
 				resetNeeded = false
 			}
 
