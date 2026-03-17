@@ -11,7 +11,7 @@
  *
  * Event schema (all fields are strings):
  *   { "type": "status", "status": "busy" }   — agent is actively processing
- *   { "type": "status", "status": "idle" }   — agent finished / idle
+ *   { "type": "status", "status": "idle" }   — agent not currently busy
  *   { "type": "permission" }                  — agent awaiting permission grant
  *   { "type": "question" }                    — agent asking user a question
  *
@@ -62,7 +62,9 @@ export default async (_input) => {
       switch (event.type) {
         case "session.status": {
           const statusType = event.properties?.status?.type ?? "idle";
-          writeEvent({ type: "status", status: statusType });
+          if (statusType === "busy" || statusType === "running") {
+            writeEvent({ type: "status", status: statusType });
+          }
           break;
         }
         case "session.idle":

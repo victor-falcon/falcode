@@ -51,7 +51,7 @@ type uiStyles struct {
 	// AgentWorking    — animated spinner while the agent is processing.
 	// AgentPermission — "!" when the agent is awaiting a permission grant.
 	// AgentQuestion   — "?" when the agent finished its turn and is waiting for the user.
-	// AgentDone       — "✓" briefly shown when the process exits.
+	// AgentDone       — "✓" briefly shown when the agent finishes a turn.
 	AgentWorking    lipgloss.Style
 	AgentPermission lipgloss.Style
 	AgentQuestion   lipgloss.Style

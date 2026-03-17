@@ -39,9 +39,12 @@ type paneRenderTickMsg struct{}
 
 // idleNotifyMsg is sent after a short debounce delay when a pane transitions to
 // AgentStatusDone. We only play the idle sound and show the OS notification if
-// the pane is still done when this fires, so brief idle gaps between tool calls
-// don't produce spurious beeps or notifications.
-type idleNotifyMsg struct{ key PaneKey }
+// the pane is still on the same completion state when this fires, so brief idle
+// gaps between tool calls or stale timers don't produce spurious notifications.
+type idleNotifyMsg struct {
+	key PaneKey
+	seq uint64
+}
 
 // WorkspaceCreatedMsg is dispatched by the background goroutine when a new
 // git worktree has been successfully created.
@@ -221,6 +224,9 @@ type Model struct {
 	// agentStatuses tracks the current agent status for each non-interactive
 	// command pane. Populated via PaneStatusMsg dispatched by the FIFO reader.
 	agentStatuses map[PaneKey]AgentStatus
+	// agentStatusSeq increments on every status update so delayed notifications
+	// can detect stale timers after the pane resumes work or changes state.
+	agentStatusSeq map[PaneKey]uint64
 
 	// agentSpinner is a shared spinner used to animate the "working" icon in
 	// workspace tabs. It ticks whenever at least one pane is Working.
@@ -295,6 +301,7 @@ func New(
 		deleteWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		createWSSpinner: spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 		agentStatuses:   make(map[PaneKey]AgentStatus),
+		agentStatusSeq:  make(map[PaneKey]uint64),
 		agentSpinner:    spinner.New(spinner.WithSpinner(spinner.Hamburger)),
 	}
 }
@@ -376,6 +383,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PaneStatusMsg:
 		prev := m.agentStatuses[msg.Key]
+		m.agentStatusSeq[msg.Key]++
+		seq := m.agentStatusSeq[msg.Key]
 		// Snapshot whether any pane was already working BEFORE this update,
 		// so we can detect when we need to (re-)start the spinner tick.
 		wasAnyWorking := m.anyPaneWorking()
@@ -395,8 +404,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Debounce: only notify if the agent is still idle after 500ms.
 				// This prevents spurious sounds/notifications from brief idle gaps between tool calls.
 				key := msg.Key
+				idleSeq := seq
 				notifyCmd = tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
-					return idleNotifyMsg{key: key}
+					return idleNotifyMsg{key: key, seq: idleSeq}
 				})
 			case AgentStatusQuestion:
 				notify.PlaySound(notify.SoundEventIdle, notif)
@@ -414,8 +424,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, notifyCmd
 
 	case idleNotifyMsg:
-		// Only notify if the pane is still done (agent didn't resume working).
-		if m.agentStatuses[msg.key] == AgentStatusDone {
+		// Only notify if this is still the latest completion transition for the
+		// pane and the agent did not resume working in the meantime.
+		if m.agentStatusSeq[msg.key] == msg.seq && m.agentStatuses[msg.key] == AgentStatusDone {
 			notif := m.cfg.GetNotifications()
 			worktreeName := ""
 			if msg.key.Workspace >= 0 && msg.key.Workspace < len(m.worktrees) {
@@ -1512,6 +1523,7 @@ func (m *Model) closeTab(idx int) {
 			delete(m.panes, key)
 		}
 		delete(m.agentStatuses, key)
+		delete(m.agentStatusSeq, key)
 		m.closedCfgTabs[m.activeWS][idx] = true
 		// Move active tab to the nearest still-visible tab.
 		if m.activeInner == idx {
@@ -1528,6 +1540,7 @@ func (m *Model) closeTab(idx int) {
 		delete(m.panes, key)
 	}
 	delete(m.agentStatuses, key)
+	delete(m.agentStatusSeq, key)
 	extra := m.extraTabs[m.activeWS]
 	m.extraTabs[m.activeWS] = append(extra[:extraIdx], extra[extraIdx+1:]...)
 
@@ -1550,6 +1563,15 @@ func (m *Model) closeTab(idx int) {
 		newStatuses[k] = s
 	}
 	m.agentStatuses = newStatuses
+
+	newStatusSeq := make(map[PaneKey]uint64, len(m.agentStatusSeq))
+	for k, seq := range m.agentStatusSeq {
+		if k.Workspace == m.activeWS && k.Tab > idx {
+			k.Tab--
+		}
+		newStatusSeq[k] = seq
+	}
+	m.agentStatusSeq = newStatusSeq
 
 	if m.activeInner >= idx && m.activeInner > 0 {
 		m.activeInner--
@@ -1596,6 +1618,11 @@ func (m *Model) detachWorkspace(wsIdx int) tea.Cmd {
 			delete(m.agentStatuses, key)
 		}
 	}
+	for key := range m.agentStatusSeq {
+		if key.Workspace == wsIdx {
+			delete(m.agentStatusSeq, key)
+		}
+	}
 
 	m.worktrees = append(m.worktrees[:wsIdx], m.worktrees[wsIdx+1:]...)
 	m.extraTabs = append(m.extraTabs[:wsIdx], m.extraTabs[wsIdx+1:]...)
@@ -1619,6 +1646,15 @@ func (m *Model) detachWorkspace(wsIdx int) tea.Cmd {
 		newStatuses[key] = s
 	}
 	m.agentStatuses = newStatuses
+
+	newStatusSeq := make(map[PaneKey]uint64, len(m.agentStatusSeq))
+	for key, seq := range m.agentStatusSeq {
+		if key.Workspace > wsIdx {
+			key.Workspace--
+		}
+		newStatusSeq[key] = seq
+	}
+	m.agentStatusSeq = newStatusSeq
 
 	m.reindexCreateJobsAfterWorkspace(wsIdx)
 
@@ -1964,6 +2000,7 @@ func (m *Model) restartPane(key PaneKey) (tea.Model, tea.Cmd) {
 	}
 	// Clear any stale agent status for the restarted pane.
 	delete(m.agentStatuses, key)
+	delete(m.agentStatusSeq, key)
 
 	tab := m.tabForKey(key)
 	if tab == nil {

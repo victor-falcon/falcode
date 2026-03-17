@@ -26,7 +26,8 @@ const (
 	// AgentStatusQuestion means the agent finished its turn and is waiting
 	// for the user to reply ("?").
 	AgentStatusQuestion
-	// AgentStatusDone means the process has exited (cleanly or with error).
+	// AgentStatusDone means the agent has emitted an explicit completion/idle
+	// event for the current turn.
 	AgentStatusDone
 )
 
@@ -103,12 +104,14 @@ func readAgentPipe(path string, key PaneKey, send func(tea.Msg)) {
 		var status AgentStatus
 		switch evt.Type {
 		case "status":
-			// "busy"/"running" → working spinner; "idle" → waiting for user reply.
+			// "busy"/"running" update the working spinner. "idle" is treated as a
+			// neutral state here; completion notifications are driven by the
+			// explicit "idle" event emitted after the turn fully settles.
 			switch evt.Status {
 			case "busy", "running":
 				status = AgentStatusWorking
 			case "idle":
-				status = AgentStatusDone
+				status = AgentStatusIdle
 			default:
 				status = AgentStatusIdle
 			}
