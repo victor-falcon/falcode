@@ -184,6 +184,7 @@ type Model struct {
 	wsCheckingDirty bool // true while git status is running before the modal can show the warning
 	wsDeleteTarget  int  // workspace index captured when delete was initiated
 	wsDeletePath    string
+	wsDeleteBranch  bool // whether the user has opted to also delete the branch (checkbox, default false)
 
 	// Quit confirmation state.
 	confirmQuit bool
@@ -1338,6 +1339,7 @@ func (m *Model) deleteWorkspaceCmd(wsIdx int) tea.Cmd {
 	m.wsDeletePath = m.worktrees[wsIdx].Path
 	m.wsDeleteDirty = false
 	m.wsCheckingDirty = true
+	m.wsDeleteBranch = false
 	m.confirmDeleteWS = true
 	return m.dirtyCheckCmd(wsIdx)
 }
@@ -2039,6 +2041,16 @@ func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.confirmDeleteWS = false
 		return m, nil
+	case tea.KeySpace:
+		// Toggle branch deletion checkbox only when the worktree has a real branch.
+		wsIdx := m.wsDeleteTarget
+		if wsIdx >= 0 && wsIdx < len(m.worktrees) {
+			branch := m.worktrees[wsIdx].Branch
+			if branch != "" && branch != "(detached)" && branch != "(bare)" {
+				m.wsDeleteBranch = !m.wsDeleteBranch
+			}
+		}
+		return m, nil
 	}
 
 	switch strings.ToLower(string(msg.Runes)) {
@@ -2050,7 +2062,12 @@ func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		wt := m.worktrees[wsIdx]
-		job := &workspaceDeleteJob{Name: wt.Name(), Path: wt.Path, Branch: wt.Branch}
+		// Only pass the branch to the delete job when the user opted in.
+		branch := ""
+		if m.wsDeleteBranch {
+			branch = wt.Branch
+		}
+		job := &workspaceDeleteJob{Name: wt.Name(), Path: wt.Path, Branch: branch}
 		if m.deleteBatchTotal == 0 {
 			m.deleteBatchDone = 0
 			m.deleteBatchFailed = 0
@@ -2061,6 +2078,7 @@ func (m *Model) handleWSDeleteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmDeleteWS = false
 		m.wsDeleteTarget = -1
 		m.wsDeletePath = ""
+		m.wsDeleteBranch = false
 		m.deleteWSSpinner = spinner.New(spinner.WithSpinner(spinner.Hamburger))
 		detachCmd := m.detachWorkspace(wsIdx)
 		return m, tea.Batch(detachCmd, m.beginDeleteWorkspaceCmd(job.Path, job.Branch), m.deleteWSSpinner.Tick)
@@ -2320,9 +2338,10 @@ func (m *Model) renderPendingWorkspacePane(job *workspaceCreateJob) string {
 func (m *Model) renderDeleteWSConfirm() string {
 	st := m.styles
 	wsIdx := m.wsDeleteTarget
-	var wsName string
+	var wsName, wsBranch string
 	if wsIdx >= 0 && wsIdx < len(m.worktrees) {
 		wsName = m.worktrees[wsIdx].Name()
+		wsBranch = m.worktrees[wsIdx].Branch
 	}
 
 	title := st.SheetTitle.Render(fmt.Sprintf("Delete '%s'?", wsName))
@@ -2343,7 +2362,24 @@ func (m *Model) renderDeleteWSConfirm() string {
 		)
 	}
 
-	lines = append(lines, st.SheetDesc.Render("[y] confirm   [n] / Esc cancel"))
+	// Show branch checkbox only when a real local branch exists.
+	hasBranch := wsBranch != "" && wsBranch != "(detached)" && wsBranch != "(bare)"
+	if hasBranch {
+		checkbox := "[ ]"
+		if m.wsDeleteBranch {
+			checkbox = "[x]"
+		}
+		lines = append(lines,
+			st.SheetDesc.Render(fmt.Sprintf("%s Delete branch '%s'", checkbox, wsBranch)),
+			st.SheetDesc.Render(""),
+		)
+	}
+
+	hint := "[y] confirm   [n] / Esc cancel"
+	if hasBranch {
+		hint = "[space] toggle branch   [y] confirm   [n] / Esc cancel"
+	}
+	lines = append(lines, st.SheetDesc.Render(hint))
 
 	content := strings.Join(lines, "\n")
 	return st.SheetBox.Render(content)
