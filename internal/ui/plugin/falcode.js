@@ -68,7 +68,7 @@ export default async (_input) => {
           break;
         }
         case "session.idle":
-          writeEvent({ type: "status", status: "idle" });
+          writeEvent({ type: "idle" });
           break;
         case "permission.replied":
           writeEvent({ type: "status", status: "busy" });
